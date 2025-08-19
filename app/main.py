@@ -1,0 +1,85 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import time
+import logging
+
+from .routers.track import router as track_router
+from .routers.callback import router as callback_router
+from .schemas import HealthResponse
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# 创建FastAPI应用
+app = FastAPI(
+    title="OCPX Relay System",
+    description="OCPX中转系统 - 统一对接上游和下游的广告追踪中转服务",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# 添加CORS中间件（如果需要跨域访问）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产环境应该限制具体域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(track_router, tags=["Track"])
+app.include_router(callback_router, tags=["Callback"])
+
+@app.get("/", response_model=HealthResponse)
+async def root():
+    """根路径 - 健康检查"""
+    return HealthResponse(
+        ok=True,
+        timestamp=int(time.time()),
+        version="1.0.0"
+    )
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """健康检查接口"""
+    return HealthResponse(
+        ok=True,
+        timestamp=int(time.time()),
+        version="1.0.0"
+    )
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动事件"""
+    logging.info("OCPX Relay System starting up...")
+    
+    # 这里可以添加启动时的初始化逻辑
+    # 比如：预热数据库连接、加载配置等
+    
+    logging.info("OCPX Relay System started successfully")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭事件"""
+    logging.info("OCPX Relay System shutting down...")
+    
+    # 清理资源
+    from .services.connector import cleanup_client
+    await cleanup_client()
+    
+    logging.info("OCPX Relay System shutdown complete")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

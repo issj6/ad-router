@@ -1,0 +1,56 @@
+settings:
+  callback_base: "https://cbkpk.notnull.cc"
+  timezone: "Asia/Shanghai"
+  data_dir: "./data/sqlite"
+  app_secret: "CHANGE_ME_TO_RANDOM_SECRET"
+
+# 定义上游（演示用 httpbin 替代真实上游）
+upstreams:
+  - id: "up_demo"
+    name: "演示上游"
+    secrets:
+      secret: "up_demo_secret"
+    adapters:
+      outbound:
+        click: &click_tpl
+          method: "GET"
+          url: "https://httpbin.org/get?aid={{aid}}&cid={{cid}}&clid={{clid}}&cb={{cb}}&ts={{ts}}&sig={{sig}}"
+          macros:
+            aid: "udm.ad.ad_id | url_encode()"
+            cid: "udm.ad.campaign_id | url_encode()"
+            clid: "udm.click.id | url_encode()"
+            ts: "udm.time.ts"
+            cb: "cb_url()"
+            sig: "hmac_sha256(secret_ref('secret'), join('&',[aid,cid,clid,ts]))"
+          timeout_ms: 1000
+          retry: {max: 1, backoff_ms: 200}
+        # 合并：imp 与 event 直接复用 click 模板
+        imp: *click_tpl
+        event: *click_tpl
+      inbound_callback:
+        event:
+          source: "query"
+          field_map:
+            "udm.click.id": "query.clid | query._CLICK_ID_"
+            "udm.event.type": "const:event"
+            "udm.event.name": "query._EVENT_"
+            "udm.meta.amount": "query._AMOUNT_"
+            "udm.meta.days": "query._DAYS_"
+            "udm.time.ts": "query.ts"
+
+
+# 下游兜底回调配置已移除（采用动态回调模板闭环）
+downstreams: []
+
+# 路由按 campaign_id 精确匹配；未命中走兜底
+routes:
+  - match_key: "campaign_id"
+    rules:
+      - equals: "cmp_456"
+        upstream: "up_demo"
+        downstream: "ds_demo"
+      - equals: "cmp_789"
+        upstream: "up_demo"
+        downstream: "ds_demo"
+    fallback_upstream: "up_demo"
+    fallback_downstream: "ds_demo"
