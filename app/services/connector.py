@@ -12,6 +12,10 @@ async def get_client() -> httpx.AsyncClient:
     """获取全局HTTP客户端，使用连接池提高性能"""
     global _client
     if _client is None:
+        # 关闭 httpx 默认日志，避免二次编码显示混淆
+        import logging
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=2.0,  # 连接超时

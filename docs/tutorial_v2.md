@@ -138,6 +138,58 @@ routes:
 
 示例：
 ```
+---
+
+## 七、数据表说明与查询示例（v2）
+
+系统统一使用一张表 `request_log` 存储链路关键信息（track 与 callback），字段如下：
+- rid：回调关联ID（等于 trace_id），唯一，用于 /cb?rid=... 定位记录
+- ds_id：下游标识
+- up_id：上游标识（路由命中后写入；有些场景可能为空）
+- event_type：click/imp
+- ad_id、click_id：广告ID/点击ID
+- ts：事件时间（毫秒）
+- os：设备系统（IOS/ANDROID，可空）
+- upload_params：JSON，上报收到的原始参数
+- callback_params：JSON，回调收到的原始参数
+- upstream_url：上报上游最终URL
+- downstream_url：最终回拨下游URL
+- is_callback_sent：是否已成功回拨下游（0/1）
+- callback_time：回拨成功时间（毫秒）
+- callback_event_type：回调事件名（如 ACTIVATED/PAID/RETAINED）
+
+### 常用查询示例（SQLite）
+- 最近100条点击：
+```sql
+SELECT rid, ds_id, ad_id, click_id, ts FROM request_log
+WHERE event_type='click'
+ORDER BY id DESC LIMIT 100;
+```
+- 查看某条 rid 的完整链路：
+```sql
+SELECT * FROM request_log WHERE rid='RID_VALUE';
+```
+- 最近回拨成功的记录：
+```sql
+SELECT rid, downstream_url, callback_event_type, callback_time FROM request_log
+WHERE is_callback_sent=1
+ORDER BY callback_time DESC LIMIT 100;
+```
+- 按广告聚合统计当天点击量：
+```sql
+SELECT ad_id, COUNT(1) AS cnt
+FROM request_log
+WHERE event_type='click' AND ts BETWEEN :start_ms AND :end_ms
+GROUP BY ad_id
+ORDER BY cnt DESC;
+```
+- 查询上游最终URL包含特定上游域名的记录：
+```sql
+SELECT rid, upstream_url FROM request_log
+WHERE upstream_url LIKE '%ad.adapi.cn%'
+ORDER BY id DESC LIMIT 200;
+```
+
 http://127.0.0.1:6789/v1/track?event_type=click&ds_id=oneway&ad_id=10_60_683572_8&click_id=ck_001&ip=1.2.3.4&ua=Mozilla/5.0&device_os=IOS&device_model=iPhone13,2&os_version=15.1&device_idfa=IDFA-TEST&device_mac=00:11:22:33:44:55&ts=1734508800000&callback=https%3A%2F%2Fmedia.com%2Fcb%3Ftrack%3Dck_001%26event_type%3D__EVENT__
 ```
 

@@ -46,11 +46,21 @@ async def root():
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """健康检查接口"""
+    """健康检查接口：附带数据库连通性检查"""
+    db_ok = False
+    try:
+        from .db import get_session
+        from sqlalchemy import text
+        async with await get_session() as session:
+            await session.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
     return HealthResponse(
         ok=True,
         timestamp=int(time.time()),
-        version="1.0.0"
+        version="1.0.0",
+        db_ok=db_ok
     )
 
 @app.on_event("startup")

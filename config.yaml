@@ -40,7 +40,7 @@ upstreams:
             caid: "udm.device.caid | url_encode()"
             # 可选
             ip: "udm.net.ip | url_encode()"
-            ua: "udm.net.ua | url_encode()"
+            ua: "udm.net.ua | normalize_encode()"
             model: "udm.device.model | url_encode()"
             x: "udm.meta.ext.custom_id | url_encode()"
           timeout_ms: 5000
@@ -83,7 +83,7 @@ upstreams:
             caid: "udm.device.caid"
             # 可选
             ip: "udm.net.ip | url_encode()"
-            user_agent: "udm.net.ua | url_encode()"
+            user_agent: "udm.net.ua | normalize_encode()"
             model: "udm.device.model | url_encode()"
           timeout_ms: 5000
           retry: { max: 2, backoff_ms: 500 }

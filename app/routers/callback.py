@@ -7,12 +7,12 @@ import logging
 
 from ..config import CONFIG
 from ..db import get_session
-from ..models import CallbackLog, DispatchLog, EventLog
+from ..models import RequestLog
 from ..schemas import APIResponse
 from ..services.router import find_upstream_config, get_adapter_config
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import eval_expr, render_template, eval_body_template
-from sqlalchemy import select
+from sqlalchemy import select, text
 import re
 import urllib.parse
 
@@ -134,30 +134,11 @@ async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream
         backoff_ms=backoff_ms
     )
 
-    # 记录分发日志
+    # 记录分发日志（已取消分发表，统一由 request_log.downstream_url 记录）
     try:
-        day = _today()
-        async with await get_session() as session:
-            dispatch_log = DispatchLog(
-                day=day,
-                trace_id=trace_id,
-                direction="to_downstream",
-                partner_id=downstream_config["id"],
-                endpoint=url,
-                method=method,
-                status=status,
-                req={
-                    "headers": headers,
-                    "body": body_data
-                },
-                resp={
-                    "data": response
-                }
-            )
-            session.add(dispatch_log)
-            await session.commit()
-    except Exception as e:
-        logging.error(f"Failed to save dispatch log: {e}")
+        pass
+    except Exception:
+        pass
 
     return status, response
 
@@ -181,20 +162,24 @@ async def handle_upstream_callback(request: Request):
     click_id = None
     callback_template = None
 
-    # 根据 rid 从事件日志找回原始模板
+    # 根据 rid 从统一表获取上下文（原始模板已不再保存在新表中，这里仅尝试获取 ds_id/up_id/click_id）
     try:
         async with await get_session() as session:
-            stmt = select(EventLog).where(EventLog.trace_id == rid)
+            stmt = select(RequestLog).where(RequestLog.rid == rid)
             res = await session.execute(stmt)
             row = res.scalar_one_or_none()
-            if row and row.payload:
-                callback_template = (row.payload or {}).get("callback_template")
-                # 同时补全上下文方便记录
-                ds_id = row.ds_id
+            if row:
+                ds_id = row.ds_id or ""
                 up_id = row.up_id or ""
-                click_id = row.click_id
+                click_id = row.click_id or None
+                # 从统一表的上报原始参数中恢复下游回调模板
+                try:
+                    upload = row.upload_params or {}
+                    callback_template = upload.get("callback_template")
+                except Exception:
+                    callback_template = callback_template
     except Exception as e:
-        logging.warning(f"Failed to load callback template by rid: {e}")
+        logging.warning(f"Failed to load request_log by rid: {e}")
 
     # 解析请求参数
     query_params = dict(request.query_params)
@@ -275,6 +260,25 @@ async def handle_upstream_callback(request: Request):
         except Exception as e:
             logging.warning(f"apply_macros failed: {e}")
 
+    # 自定义日志：打印最终回拨下游URL
+    logging.info(f"[to-downstream] callback url: {final_downstream_url}")
+
+    # 记录回调原始参数与最终回拨URL到统一表（使用ORM保存，便于调试）
+    try:
+        async with await get_session() as session:
+            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
+            obj = res.scalar_one_or_none()
+            if obj:
+                obj.callback_params = {"query": query_params, "body": body_data}
+                obj.downstream_url = final_downstream_url
+                obj.is_callback_sent = 0
+                obj.callback_event_type = (udm.get("event") or {}).get("name")
+                await session.commit()
+            else:
+                logging.warning(f"RequestLog not found to set downstream_url, rid={rid}")
+    except Exception as e:
+        logging.error(f"Failed to update downstream fields: {e}")
+
     # 记录回调日志
     callback_success = True
     try:
@@ -304,7 +308,6 @@ async def handle_upstream_callback(request: Request):
     try:
         if final_downstream_url:
             # 直接按最终URL回调（GET）
-            # logging.info("######回调地址：" + final_downstream_url)
             status, resp = await http_send_with_retry(
                 method="GET",
                 url=final_downstream_url,
@@ -315,6 +318,21 @@ async def handle_upstream_callback(request: Request):
                 backoff_ms=300
             )
             downstream_status, downstream_response = status, resp
+
+            # 回拨成功则更新统一表状态与时间
+            if downstream_status == 200:
+                try:
+                    async with await get_session() as session:
+                        res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
+                        obj = res.scalar_one_or_none()
+                        if obj:
+                            obj.is_callback_sent = 1
+                            obj.callback_time = int(time.time()*1000)
+                            await session.commit()
+                        else:
+                            logging.warning(f"RequestLog not found to set callback_sent, rid={rid}")
+                except Exception as e:
+                    logging.error(f"Failed to update callback_sent: {e}")
         else:
             # 无模板则视为无回调需求（直接成功）
             downstream_status, downstream_response = 200, {"msg": "no_callback_template"}

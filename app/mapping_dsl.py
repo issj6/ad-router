@@ -30,6 +30,20 @@ def _apply_function(val: Any, fn: str) -> Any:
         return str(val).lower() if val is not None else val
     elif fn == "url_encode()":
         return urllib.parse.quote(str(val), safe="") if val is not None else val
+    elif fn == "normalize_encode()":
+        # 先反复解码直至稳定，再统一编码一次，避免二次编码
+        if val is None:
+            return val
+        s = str(val)
+        try:
+            while True:
+                u = urllib.parse.unquote(s)
+                if u == s:
+                    break
+                s = u
+        except Exception:
+            pass
+        return urllib.parse.quote(s, safe="")
     elif fn == "trim()":
         return str(val).strip() if val is not None else val
     elif fn.startswith("date_format("):

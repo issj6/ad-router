@@ -1,84 +1,48 @@
 import os
-import datetime
-import asyncio
-from typing import Dict
+from typing import Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
 
 Base = declarative_base()
 
-# 缓存每日数据库引擎和会话
-_engines: Dict[str, AsyncEngine] = {}
-_sessions: Dict[str, async_sessionmaker[AsyncSession]] = {}
+# 全局 MySQL 异步引擎与会话
+_engine: Optional[AsyncEngine] = None
+_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
-def _today_key() -> str:
-    """获取今日日期键 YYYYMMDD"""
-    return datetime.datetime.now().strftime("%Y%m%d")
+# 默认使用你提供的连接信息；也支持通过环境变量覆盖
+MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "123456")
+MYSQL_DB = os.getenv("MYSQL_DB", "ad_router")
 
-async def _prepare_engine(db_path: str) -> AsyncEngine:
-    """准备数据库引擎，设置WAL模式以提高并发性能"""
-    # 确保目录存在
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    
-    # 创建异步引擎
+async def _prepare_engine() -> AsyncEngine:
+    """创建全局 MySQL 异步引擎（aiomysql）"""
+    # 使用 asyncmy 驱动以获得更好的性能
+    dsn = f"mysql+asyncmy://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}?charset=utf8mb4"
     engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}", 
-        echo=False, 
+        dsn,
+        echo=False,
         pool_pre_ping=True,
-        pool_recycle=3600  # 1小时回收连接
+        pool_recycle=1800,   # 30分钟回收
+        pool_size=20,
+        max_overflow=40,
     )
-    
-    # 设置SQLite优化参数
+    # 初始化表结构
     async with engine.begin() as conn:
-        # WAL 模式，提高并发读写性能
-        await conn.execute(text("PRAGMA journal_mode=WAL;"))
-        # 正常同步模式，平衡性能和安全
-        await conn.execute(text("PRAGMA synchronous=NORMAL;"))
-        # 设置缓存大小
-        await conn.execute(text("PRAGMA cache_size=10000;"))
-        # 设置临时存储为内存
-        await conn.execute(text("PRAGMA temp_store=memory;"))
-    
+        from .models import RequestLog
+        await conn.run_sync(Base.metadata.create_all)
     return engine
 
 async def get_session() -> AsyncSession:
-    """获取当日数据库会话"""
-    key = _today_key()
-    
-    if key not in _sessions:
-        # 构建当日数据库路径
-        from .config import CONFIG
-        db_path = os.path.join(
-            CONFIG["settings"]["data_dir"],
-            f"{key}.db"
-        )
-        
-        # 创建引擎
-        engine = await _prepare_engine(db_path)
-        _engines[key] = engine
-        _sessions[key] = async_sessionmaker(engine, expire_on_commit=False)
-        
-        # 初始化表结构
-        async with engine.begin() as conn:
-            # 导入模型以确保表定义被加载
-            from .models import EventLog, DispatchLog, CallbackLog
-            await conn.run_sync(Base.metadata.create_all)
-    
-    return _sessions[key]()
+    """获取全局 MySQL 会话（异步）"""
+    global _engine, _session_factory
+    if _engine is None:
+        _engine = await _prepare_engine()
+        _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+    assert _session_factory is not None
+    return _session_factory()
 
 async def cleanup_old_engines():
-    """清理旧的数据库引擎（可选的维护任务）"""
-    current_key = _today_key()
-    keys_to_remove = []
-    
-    for key in _engines.keys():
-        if key != current_key:
-            keys_to_remove.append(key)
-    
-    for key in keys_to_remove:
-        if key in _engines:
-            await _engines[key].dispose()
-            del _engines[key]
-        if key in _sessions:
-            del _sessions[key]
+    """兼容保留，无需处理（MySQL 单实例）"""
+    return

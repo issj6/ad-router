@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Any, Dict
@@ -9,13 +10,13 @@ import urllib.parse
 
 from ..config import CONFIG
 from ..db import get_session
-from ..models import EventLog, DispatchLog
+from ..models import RequestLog
 from ..schemas import TrackRequest, APIResponse
 from ..services.router import choose_route, find_upstream_config, get_adapter_config
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 
 router = APIRouter()
 
@@ -27,7 +28,7 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
     """构造统一数据模型(UDM)"""
     # 默认使用13位毫秒时间戳
     now = int(time.time() * 1000)
-    
+
     return {
         "event": {
             "type": body.event_type
@@ -58,34 +59,52 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
 async def _save_event_log(trace_id: str, udm: Dict[str, Any], body: TrackRequest, callback_template: str | None = None):
     """保存事件日志"""
     day = _today()
-    
+
     try:
         async with await get_session() as session:
-            event_log = EventLog(
-                day=day,
-                trace_id=trace_id,
+            # 统一表写入
+            reqlog = RequestLog(
+                rid=trace_id,
                 ds_id=udm["meta"]["downstream_id"],
                 up_id=udm["meta"]["upstream_id"],
                 event_type=udm["event"]["type"],
-                click_id=udm["click"]["id"],
                 ad_id=udm["ad"]["ad_id"],
+                click_id=udm["click"]["id"],
                 ts=udm["time"]["ts"],
-                ip=udm["net"]["ip"],
-                ua=udm["net"]["ua"],
-                payload={
-                    "device": body.device,
-                    "user": body.user,
-                    "ext": body.ext,
-                    "callback_template": callback_template
-                }
+                os=(udm.get("device") or {}).get("os"),
+                upload_params={
+                    "query": dict(body.dict() if hasattr(body, 'dict') else {}),
+                    "callback_template": callback_template,
+                },
+                callback_params=None,
+                upstream_url=None,
+                downstream_url=None,
+                is_callback_sent=0,
+                callback_time=None,
+                callback_event_type=None,
             )
-            
-            session.add(event_log)
+            session.add(reqlog)
             await session.commit()
-            
+
     except IntegrityError:
-        # 幂等：当日内 (ds_id,event_type,click_id) 重复上报，忽略冲突
-        logging.info("duplicate event ignored (idempotent)")
+        # 幂等：重复上报，复用已存在记录的 rid
+        logging.info("duplicate event ignored (idempotent), try reuse rid")
+        try:
+            async with await get_session() as session:
+                # 通过关键键查找已存在记录（基于我们刚插入失败的字段）
+                # 注意：SQLite不支持 WHERE 子句上的函数索引，这里直接按三元组+近似时间范围查
+                # 简化：根据 ds_id/event_type/click_id 最近一条作为复用对象
+                from sqlalchemy import text
+                q = text(
+                    "SELECT rid FROM request_log WHERE ds_id=:ds AND event_type=:et AND click_id=:cid ORDER BY id DESC LIMIT 1"
+                )
+                res = await session.execute(q, {"ds": udm["meta"]["downstream_id"], "et": udm["event"]["type"], "cid": udm["click"]["id"]})
+                row = res.first()
+                if row and row[0]:
+                    # 将当前 trace_id 替换为已存在的 rid，用于生成 cb_url()
+                    udm["meta"]["reuse_rid"] = row[0]
+        except Exception:
+            pass
     except Exception as e:
         # 其它数据库错误不影响主流程，但要记录日志
         logging.error(f"Failed to save event log: {e}")
@@ -98,7 +117,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     if not adapter:
         logging.warning(f"No outbound adapter for upstream {upstream_config['id']} event {event_type}")
         return 200, {"msg": "no_adapter"}
-    
+
     # 准备上下文
     ctx = {
         "udm": udm,
@@ -108,16 +127,17 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
             "ua": udm["net"]["ua"]
         }
     }
-    
+
     secrets = upstream_config.get("secrets", {})
-    
+
     # 准备回调URL助手
     app_secret = CONFIG["settings"]["app_secret"]
     callback_base = CONFIG["settings"]["callback_base"].rstrip("/")
-    
+
     def cb_url():
-        # 新规则：用 rid=trace_id 关联，不再使用 token；保留下游模板的原始查询串
-        base = f"{callback_base}/cb?rid={trace_id}"
+        # 新规则：若幂等复用存在，则使用复用rid；否则用本次trace_id
+        rid = udm.get("meta", {}).get("reuse_rid") or trace_id
+        base = f"{callback_base}/cb?rid={rid}"
         try:
             if callback_template:
                 from urllib.parse import urlparse
@@ -127,27 +147,43 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         except Exception:
             pass
         return base
-    
+
     helpers = {"cb_url": cb_url}  # 将回调模板通过token传递到回调环节
-    
+
     # 渲染URL
     url = render_template(adapter["url"], adapter.get("macros", {}), ctx, secrets, helpers)
-    # logging.info(f"[to-upstream] click url: {url}")
+    logging.info(f"[to-upstream] click url: {url}")
+
+    # 将上游最终URL保存（使用ORM以确保JSON/类型适配），并记录失败原因
+    try:
+        async with await get_session() as session:
+            rid_to_use = (udm.get("meta", {}).get("reuse_rid") or trace_id)
+            from sqlalchemy import select
+            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
+            obj = res.scalar_one_or_none()
+            if obj:
+                obj.upstream_url = url
+                await session.commit()
+            else:
+                logging.warning(f"RequestLog not found to set upstream_url, rid={rid_to_use}")
+    except Exception as e:
+        logging.error(f"Failed to update upstream_url: {e}")
+
     method = adapter.get("method", "GET")
     headers = adapter.get("headers")
-    
+
     # 处理请求体（如果有）
     body_template = adapter.get("body")
     body_data = None
     if body_template:
         body_data = eval_body_template(body_template, ctx, secrets, helpers)
-    
+
     # 发送请求
     timeout_ms = adapter.get("timeout_ms", 5000)
     retry_config = adapter.get("retry", {})
     max_retries = retry_config.get("max", 1)
     backoff_ms = retry_config.get("backoff_ms", 200)
-    
+
     status, response = await http_send_with_retry(
         method=method,
         url=url,
@@ -157,33 +193,51 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         max_retries=max_retries,
         backoff_ms=backoff_ms
     )
-    
-    # 记录分发日志
+
+    # 记录分发日志（已取消分发表，保留 request_log.upstream_url 即可）
     try:
-        day = _today()
+        pass
+    except Exception:
+        pass
+    # 一次性 INSERT：准备所有字段后写入（若不存在）；若幂等复用，则仅确保 upstream_url 已写入
+    try:
         async with await get_session() as session:
-            dispatch_log = DispatchLog(
-                day=day,
-                trace_id=trace_id,
-                direction="to_upstream",
-                partner_id=upstream_config["id"],
-                endpoint=url,
-                method=method,
-                status=status,
-                req={
-                    "headers": headers,
-                    "body": body_data
-                },
-                resp={
-                    "data": response
-                }
-            )
-            session.add(dispatch_log)
-            await session.commit()
+            from sqlalchemy import select
+            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
+            obj = res.scalar_one_or_none()
+            if obj is None:
+                reqlog = RequestLog(
+                    rid=rid_to_use,
+                    ds_id=udm["meta"]["downstream_id"],
+                    up_id=udm["meta"]["upstream_id"],
+                    event_type=udm["event"]["type"],
+                    ad_id=udm["ad"]["ad_id"],
+                    click_id=udm["click"]["id"],
+                    ts=udm["time"]["ts"],
+                    os=(udm.get("device") or {}).get("os"),
+                    upload_params={
+                        "query": dict(udm),
+                        "callback_template": callback_template,
+                    },
+                    callback_params=None,
+                    upstream_url=url,
+                    downstream_url=None,
+                    is_callback_sent=0,
+                    callback_time=None,
+                    callback_event_type=None,
+                )
+                session.add(reqlog)
+                await session.commit()
+            else:
+                # 已存在（幂等），上面已写入 upstream_url
+                pass
     except Exception as e:
-        logging.error(f"Failed to save dispatch log: {e}")
-    
+        logging.error(f"Failed to insert/update RequestLog: {e}")
+
+    # 返回状态和响应（供调用方使用）
     return status, response
+
+
 
 @router.get("/v1/track", response_model=APIResponse)
 async def track_event(request: Request,
@@ -256,6 +310,22 @@ async def track_event(request: Request,
     )
 
     # 解析并保存下游回调模板（URL编码→解码后保存）
+    # 幂等预查：如已存在相同 (ds_id,event_type,click_id) 记录，复用其 rid
+    rid_existing = None
+    try:
+        async with await get_session() as session:
+            res = await session.execute(
+                text("SELECT rid FROM request_log WHERE ds_id=:ds AND event_type=:et AND click_id=:cid ORDER BY id DESC LIMIT 1"),
+                {"ds": udm["meta"]["downstream_id"], "et": udm["event"]["type"], "cid": udm["click"]["id"]}
+            )
+            row = res.first()
+            if row and row[0]:
+                rid_existing = row[0]
+    except Exception:
+        pass
+
+    rid_to_use = rid_existing or trace_id
+
     callback_template: str | None = None
     if callback:
         try:
@@ -273,14 +343,10 @@ async def track_event(request: Request,
     # 构造最终UDM
     udm = _make_udm(body, request, up_id, body.ds_id)
 
-    # 保存事件日志（异步，不阻塞主流程）
-    # 将callback模板一并保存到事件日志的payload中
-    if callback_template is not None:
-        if "ext" not in udm["meta"] or udm["meta"]["ext"] is None:
-            udm["meta"]["ext"] = {}
-    # 保存事件日志（异步，不阻塞主流程）
-    await _save_event_log(trace_id, udm, body, callback_template)
-    
+    # 直接一次写入：准备所有需要的字段，等待渲染出上游URL后，一次性保存
+    # 注意：此处不再调用 _save_event_log，改为下方一次性 insert
+    pass
+
     # 准备响应数据
     # 如果没有找到上游，直接认为成功（我们已记录）
     if not up_id:
