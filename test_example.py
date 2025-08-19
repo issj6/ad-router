@@ -206,7 +206,7 @@ def main():
         print("1. 查看服务日志，确认上游请求是否正常发送")
         print("2. 检查 ./data/sqlite/ 目录下的数据库文件")
         print("3. 访问 http://localhost:8000/docs 查看API文档")
-        print("4. 根据实际需求修改 config.yaml 配置")
+        print("4. 根据实际需求修改 config_example.yaml 配置")
         
     except requests.exceptions.ConnectionError:
         print("❌ 连接失败，请确认服务是否已启动")

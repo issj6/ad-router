@@ -25,19 +25,19 @@ def check_dependencies():
 
 def check_config():
     """检查配置文件"""
-    if not os.path.exists("config.yaml"):
-        print("❌ 配置文件 config.yaml 不存在")
+    if not os.path.exists("config_example.yaml"):
+        print("❌ 配置文件 config_example.yaml 不存在")
         return False
     
     try:
         import yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
+        with open("config_example.yaml", "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         
         # 检查必要配置
         settings = config.get("settings", {})
         if settings.get("app_secret") == "CHANGE_ME_TO_RANDOM_SECRET":
-            print("⚠️  警告: 请修改 config.yaml 中的 app_secret 为随机密钥")
+            print("⚠️  警告: 请修改 config_example.yaml 中的 app_secret 为随机密钥")
         
         print("✅ 配置文件检查通过")
         return True

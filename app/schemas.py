@@ -39,7 +39,7 @@ class TrackRequest(BaseModel):
     ua: Optional[str] = Field(None, description="User-Agent")
 
     # 设备信息
-    device: Optional[Dict[str, Any]] = Field(None, description="设备信息，如：{\"idfa\":\"xxx\",\"os\":\"iOS\"}")
+    device: Optional[Dict[str, Any]] = Field(None, description="设备信息，如：{\"idfa\":\"xxx\",\"os\":\"iOS\",\"os_version\":\"14.0\",\"mac\":\"00:11:22:33:44:55\"}")
 
     # 用户信息（仅接受哈希值）
     user: Optional[Dict[str, Any]] = Field(None, description="用户信息，如：{\"phone_md5\":\"xxx\",\"email_sha256\":\"xxx\"}")

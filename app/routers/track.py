@@ -15,6 +15,7 @@ from ..services.router import choose_route, find_upstream_config, get_adapter_co
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
+from sqlalchemy.exc import IntegrityError
 
 router = APIRouter()
 
@@ -82,8 +83,11 @@ async def _save_event_log(trace_id: str, udm: Dict[str, Any], body: TrackRequest
             session.add(event_log)
             await session.commit()
             
+    except IntegrityError:
+        # 幂等：当日内 (ds_id,event_type,click_id) 重复上报，忽略冲突
+        logging.info("duplicate event ignored (idempotent)")
     except Exception as e:
-        # 数据库错误不影响主流程，但要记录日志
+        # 其它数据库错误不影响主流程，但要记录日志
         logging.error(f"Failed to save event log: {e}")
 
 async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_config: Dict[str, Any],
@@ -112,15 +116,17 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     callback_base = CONFIG["settings"]["callback_base"].rstrip("/")
     
     def cb_url():
-        token = generate_callback_token(
-            ds_id=udm["meta"]["downstream_id"],
-            up_id=udm["meta"]["upstream_id"],
-            click_id=udm["click"]["id"] or "",
-            secret=app_secret,
-            callback_template=callback_template
-        )
-        # 在回调URL中携带占位宏，方便上游在回调前进行宏替换
-        return f"{callback_base}/cb/{token}?_EVENT_=_EVENT_&_AMOUNT_=_AMOUNT_&_DAYS_=_DAYS_"
+        # 新规则：用 rid=trace_id 关联，不再使用 token；保留下游模板的原始查询串
+        base = f"{callback_base}/cb?rid={trace_id}"
+        try:
+            if callback_template:
+                from urllib.parse import urlparse
+                parsed = urlparse(callback_template)
+                if parsed.query:
+                    return f"{base}&{parsed.query}"
+        except Exception:
+            pass
+        return base
     
     helpers = {"cb_url": cb_url}  # 将回调模板通过token传递到回调环节
     
@@ -196,6 +202,8 @@ async def track_event(request: Request,
                      device_oaid: str = None,
                      device_imei: str = None,
                      device_android_id: str = None,
+                     os_version: str = None,
+                     device_mac: str = None,
                      # 用户信息
                      user_phone_md5: str = None,
                      user_email_sha256: str = None,
@@ -223,6 +231,8 @@ async def track_event(request: Request,
     if device_oaid: device["oaid"] = device_oaid
     if device_imei: device["imei"] = device_imei
     if device_android_id: device["android_id"] = device_android_id
+    if os_version: device["os_version"] = os_version
+    if device_mac: device["mac"] = device_mac
 
     user = {}
     if user_phone_md5: user["phone_md5"] = user_phone_md5

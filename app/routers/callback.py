@@ -7,20 +7,22 @@ import logging
 
 from ..config import CONFIG
 from ..db import get_session
-from ..models import CallbackLog, DispatchLog
+from ..models import CallbackLog, DispatchLog, EventLog
 from ..schemas import APIResponse
-from ..services.router import find_upstream_config, find_downstream_config, get_adapter_config
+from ..services.router import find_upstream_config, get_adapter_config
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import eval_expr, render_template, eval_body_template
-from ..utils.security import decode_token
+from sqlalchemy import select
 import re
 import urllib.parse
 
 router = APIRouter()
 
+
 def _today() -> str:
     """获取今日日期字符串 YYYYMMDD"""
     return datetime.datetime.now().strftime("%Y%m%d")
+
 
 def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets: Dict[str, str]) -> Dict[str, Any]:
     """映射入站字段到UDM"""
@@ -34,90 +36,94 @@ def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets:
         "time": {},
         "meta": {}
     }
-    
+
     for udm_path, expr in (field_map or {}).items():
         try:
             # 解析UDM路径，如 "udm.click.id"
             parts = udm_path.split(".")
             if len(parts) < 2 or parts[0] != "udm":
                 continue
-            
+
             # 计算表达式值
             value = eval_expr(expr, ctx, secrets, {})
-            
+
             # 设置到UDM中
             current = udm
             for part in parts[1:-1]:
                 current = current.setdefault(part, {})
             current[parts[-1]] = value
-            
+
         except Exception as e:
             logging.warning(f"Failed to map field {udm_path}: {e}")
-    
+
     return udm
 
-async def _verify_callback_signature(verify_config: Dict[str, Any], ctx: Dict[str, Any], secrets: Dict[str, str]) -> bool:
+
+async def _verify_callback_signature(verify_config: Dict[str, Any], ctx: Dict[str, Any],
+                                     secrets: Dict[str, str]) -> bool:
     """验证回调签名"""
     if not verify_config:
         return True  # 没有验证配置则跳过验证
-    
+
     try:
         # 获取签名
         signature_expr = verify_config.get("signature", "")
         actual_sig = eval_expr(signature_expr, ctx, secrets, {})
-        
+
         # 计算期望签名
         message_expr = verify_config.get("message", "")
         secret_ref = verify_config.get("secret_ref", "")
-        
+
         message = eval_expr(message_expr, ctx, secrets, {})
         secret = secrets.get(secret_ref, "")
-        
+
         if verify_config.get("type") == "hmac_sha256":
             import hmac
             import hashlib
             expected_sig = hmac.new(secret.encode(), str(message).encode(), hashlib.sha256).hexdigest()
             return str(actual_sig) == expected_sig
-        
+
         return False
-        
+
     except Exception as e:
         logging.error(f"Signature verification failed: {e}")
         return False
 
-async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream_config: Dict[str, Any]) -> tuple[int, Any]:
+
+async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream_config: Dict[str, Any]) -> tuple[
+    int, Any]:
     """分发回调到下游"""
     # 获取适配器配置
     adapter = get_adapter_config(downstream_config, "outbound_callback", "event")
     if not adapter:
         logging.warning(f"No outbound_callback adapter for downstream {downstream_config['id']}")
         return 200, {"msg": "no_adapter"}
-    
+
     # 准备上下文
     ctx = {"udm": udm}
     secrets = downstream_config.get("secrets", {})
     helpers = {}
-    
+
     # 渲染URL
     url = adapter["url"]
     if "macros" in adapter:
         url = render_template(adapter["url"], adapter["macros"], ctx, secrets, helpers)
-    
+
     method = adapter.get("method", "GET")
     headers = adapter.get("headers")
-    
+
     # 处理请求体
     body_template = adapter.get("body")
     body_data = None
     if body_template:
         body_data = eval_body_template(body_template, ctx, secrets, helpers)
-    
+
     # 发送请求
     timeout_ms = adapter.get("timeout_ms", 5000)
     retry_config = adapter.get("retry", {})
     max_retries = retry_config.get("max", 3)
     backoff_ms = retry_config.get("backoff_ms", 300)
-    
+
     status, response = await http_send_with_retry(
         method=method,
         url=url,
@@ -127,7 +133,7 @@ async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream
         max_retries=max_retries,
         backoff_ms=backoff_ms
     )
-    
+
     # 记录分发日志
     try:
         day = _today()
@@ -152,46 +158,52 @@ async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream
             await session.commit()
     except Exception as e:
         logging.error(f"Failed to save dispatch log: {e}")
-    
+
     return status, response
 
-@router.get("/cb/{token}", response_model=APIResponse)
-async def handle_upstream_callback(token: str, request: Request):
+
+@router.get("/cb", response_model=APIResponse)
+async def handle_upstream_callback(request: Request):
     """
-    处理上游回调（仅GET）
+    处理上游回调（仅GET），通过 rid 关联原始模板
     """
     trace_id = str(uuid.uuid4())
     day = _today()
-    
-    # 解码token
+
+    # 读取 rid
+    rid = request.query_params.get("rid")
+    if not rid:
+        raise HTTPException(status_code=400, detail="Missing rid")
+
+    # 注意：上游ID/下游ID 可以不从token取，按 inbound 映射后如需写日志可从UDM取；此处保持最小改动
+    up_id = ""
+    ds_id = ""
+    click_id = None
+    callback_template = None
+
+    # 根据 rid 从事件日志找回原始模板
     try:
-        app_secret = CONFIG["settings"]["app_secret"]
-        payload = decode_token(token, app_secret)
-        up_id = payload.get("up_id")
-        ds_id = payload.get("ds_id")
-        click_id = payload.get("click_id")
-        callback_template = payload.get("callback_template")
+        async with await get_session() as session:
+            stmt = select(EventLog).where(EventLog.trace_id == rid)
+            res = await session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if row and row.payload:
+                callback_template = (row.payload or {}).get("callback_template")
+                # 同时补全上下文方便记录
+                ds_id = row.ds_id
+                up_id = row.up_id or ""
+                click_id = row.click_id
     except Exception as e:
-        logging.warning(f"Invalid callback token: {e}")
-        raise HTTPException(status_code=400, detail="Invalid token")
-    
-    # 查找上游和下游配置
-    upstream_config = find_upstream_config(up_id, CONFIG)
-    downstream_config = find_downstream_config(ds_id, CONFIG)
-    
-    if not upstream_config:
-        raise HTTPException(status_code=400, detail="Unknown upstream")
-    if not downstream_config:
-        raise HTTPException(status_code=400, detail="Unknown downstream")
-    
+        logging.warning(f"Failed to load callback template by rid: {e}")
+
     # 解析请求参数
     query_params = dict(request.query_params)
-    
+
     try:
         body_data = await request.json()
     except Exception:
         body_data = {}
-    
+
     # 构造上下文
     ctx = {
         "query": query_params,
@@ -201,27 +213,30 @@ async def handle_upstream_callback(token: str, request: Request):
             "ua": request.headers.get("user-agent", "")
         }
     }
-    
-    # 获取上游回调适配器
-    inbound_adapter = get_adapter_config(upstream_config, "inbound_callback", "event")
-    if not inbound_adapter:
-        logging.warning(f"No inbound_callback adapter for upstream {up_id}")
-        return APIResponse(success=True, code=200, message="no_inbound_adapter")
-    
-    secrets = upstream_config.get("secrets", {})
-    
-    # 验证签名
-    verify_config = inbound_adapter.get("verify")
-    if verify_config:
-        if not await _verify_callback_signature(verify_config, ctx, secrets):
-            logging.warning(f"Callback signature verification failed for upstream {up_id}")
-            raise HTTPException(status_code=400, detail="Invalid signature")
-    
-    # 映射字段到UDM
-    field_map = inbound_adapter.get("field_map", {})
-    udm = _map_inbound_fields(field_map, ctx, secrets)
 
-    # 补充token中的信息
+    # 如果缺少上游配置，则不进行 inbound 解析，直接走模板替换（宽松容错）
+    udm = {"event": {}, "click": {}, "meta": {}}
+    inbound_adapter = None
+
+    if up_id:
+        upstream_config = find_upstream_config(up_id, CONFIG)
+        if upstream_config:
+            inbound_adapter = get_adapter_config(upstream_config, "inbound_callback", "event")
+            if inbound_adapter:
+                secrets = upstream_config.get("secrets", {})
+                # 验签
+                verify_config = inbound_adapter.get("verify")
+                if verify_config:
+                    if not await _verify_callback_signature(verify_config, ctx, secrets):
+                        logging.warning(f"Callback signature verification failed for upstream {up_id}")
+                        raise HTTPException(status_code=400, detail="Invalid signature")
+                # 映射
+                field_map = inbound_adapter.get("field_map", {})
+                udm = _map_inbound_fields(field_map, ctx, secrets)
+
+    # 补充上下文信息
+    udm.setdefault("meta", {})
+    udm.setdefault("click", {})
     udm["meta"]["upstream_id"] = up_id
     udm["meta"]["downstream_id"] = ds_id
     if click_id:
@@ -237,19 +252,20 @@ async def handle_upstream_callback(token: str, request: Request):
         # 常见别名统一映射
         mapping = {}
         ev = (u.get("event") or {}).get("name")
-        mapping.update({k: (ev or "") for k in ["EVENT","EVENT_TYPE","EVENTTYPE","EVT","TYPE"]})
+        mapping.update({k: (ev or "") for k in ["EVENT", "EVENT_TYPE", "EVENTTYPE", "EVT", "TYPE"]})
         ck = (u.get("click") or {}).get("id")
-        mapping.update({k: (ck or "") for k in ["CLICK_ID","CLICKID","CLID","CLKID"]})
+        mapping.update({k: (ck or "") for k in ["CLICK_ID", "CLICKID", "CLID", "CLKID"]})
         amt = ((u.get("meta") or {}).get("amount"))
-        mapping.update({k: (str(amt) if amt is not None else "") for k in ["AMOUNT","PRICE","VALUE"]})
+        mapping.update({k: (str(amt) if amt is not None else "") for k in ["AMOUNT", "PRICE", "VALUE"]})
         days = ((u.get("meta") or {}).get("days"))
-        mapping.update({k: (str(days) if days is not None else "") for k in ["DAYS","RETENTION","RETAIN_DAYS"]})
+        mapping.update({k: (str(days) if days is not None else "") for k in ["DAYS", "RETENTION", "RETAIN_DAYS"]})
         return mapping
 
     def apply_macros(tmpl: str, mapping: Dict[str, str]) -> str:
         def rep(m):
             key = m.group(1).upper()
             return mapping.get(key, m.group(0))
+
         return re.sub(r"__([A-Za-z0-9_]+)__", rep, tmpl)
 
     final_downstream_url: str | None = None
@@ -270,7 +286,7 @@ async def handle_upstream_callback(token: str, request: Request):
                 ds_id=ds_id,
                 ok=1,  # 先标记为成功，后续如果下游分发失败会更新
                 raw={
-                    "token_payload": payload,
+                    "rid": rid,
                     "query": query_params,
                     "body": body_data,
                     "udm": udm,
@@ -288,6 +304,7 @@ async def handle_upstream_callback(token: str, request: Request):
     try:
         if final_downstream_url:
             # 直接按最终URL回调（GET）
+            # logging.info("######回调地址：" + final_downstream_url)
             status, resp = await http_send_with_retry(
                 method="GET",
                 url=final_downstream_url,
