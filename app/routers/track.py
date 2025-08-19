@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 from typing import Any, Dict
 import uuid
 import time
@@ -9,7 +10,7 @@ import urllib.parse
 from ..config import CONFIG
 from ..db import get_session
 from ..models import EventLog, DispatchLog
-from ..schemas import TrackRequest, TrackResponse
+from ..schemas import TrackRequest, APIResponse
 from ..services.router import choose_route, find_upstream_config, get_adapter_config
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
@@ -28,18 +29,14 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
     
     return {
         "event": {
-            "type": body.event_type,
-            "name": body.event_name
+            "type": body.event_type
         },
         "click": {
             "id": body.click_id,
             "source": ds_id or body.ds_id
         },
         "ad": {
-            "ad_id": body.ad_id,
-            "campaign_id": body.campaign_id,
-            "adgroup_id": body.adgroup_id,
-            "creative_id": body.creative_id
+            "ad_id": body.ad_id
         },
         "device": body.device or {},
         "user": body.user or {},
@@ -69,10 +66,8 @@ async def _save_event_log(trace_id: str, udm: Dict[str, Any], body: TrackRequest
                 ds_id=udm["meta"]["downstream_id"],
                 up_id=udm["meta"]["upstream_id"],
                 event_type=udm["event"]["type"],
-                event_name=udm["event"]["name"],
                 click_id=udm["click"]["id"],
                 ad_id=udm["ad"]["ad_id"],
-                campaign_id=udm["ad"]["campaign_id"],
                 ts=udm["time"]["ts"],
                 ip=udm["net"]["ip"],
                 ua=udm["net"]["ua"],
@@ -131,6 +126,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     
     # 渲染URL
     url = render_template(adapter["url"], adapter.get("macros", {}), ctx, secrets, helpers)
+    # logging.info(f"[to-upstream] click url: {url}")
     method = adapter.get("method", "GET")
     headers = adapter.get("headers")
     
@@ -183,16 +179,12 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     
     return status, response
 
-@router.get("/v1/track", response_model=TrackResponse)
+@router.get("/v1/track", response_model=APIResponse)
 async def track_event(request: Request,
                      ds_id: str,
                      event_type: str,
-                     campaign_id: str = None,
                      click_id: str = None,
                      ad_id: str = None,
-                     adgroup_id: str = None,
-                     creative_id: str = None,
-                     event_name: str = None,
                      ts: int = None,
                      ip: str = None,
                      ua: str = None,
@@ -216,7 +208,7 @@ async def track_event(request: Request,
     支持的事件类型：click, imp, event
     """
     # 验证事件类型
-    if event_type not in ["click", "imp", "event"]:
+    if event_type not in ["click", "imp"]:
         raise HTTPException(status_code=400, detail="Invalid event_type")
 
     # 生成链路追踪ID
@@ -243,11 +235,7 @@ async def track_event(request: Request,
     body = TrackRequest(
         ds_id=ds_id,
         event_type=event_type,
-        event_name=event_name,
         ad_id=ad_id,
-        campaign_id=campaign_id,
-        adgroup_id=adgroup_id,
-        creative_id=creative_id,
         click_id=click_id,
         ts=ts,
         ip=ip,
@@ -284,60 +272,27 @@ async def track_event(request: Request,
     await _save_event_log(trace_id, udm, body, callback_template)
     
     # 准备响应数据
-    response_data = {
-        "trace_id": trace_id,
-        "click_id": body.click_id
-    }
-    
-    # 如果没有找到上游，直接返回成功
+    # 如果没有找到上游，直接认为成功（我们已记录）
     if not up_id:
-        return TrackResponse(
-            code=0,
-            msg="ok",
-            data=response_data
-        )
-    
+        return APIResponse(success=True, code=200, message="ok")
+
     # 查找上游配置
     upstream_config = find_upstream_config(up_id, CONFIG)
     if not upstream_config:
-        return TrackResponse(
-            code=0,
-            msg="ok",
-            data=response_data
-        )
-    
+        return APIResponse(success=True, code=200, message="ok")
+
     # 分发到上游
     try:
         upstream_status, upstream_response = await _dispatch_to_upstream(
             trace_id, udm, upstream_config, event_type, callback_template
         )
-        
-        response_data["upstream_status"] = upstream_status
-        
-        # 根据上游响应决定返回码
-        if upstream_status >= 500:
-            return TrackResponse(
-                code=2002,
-                msg="upstream_error",
-                data=response_data
-            )
-        elif upstream_status == 408:
-            return TrackResponse(
-                code=2001,
-                msg="upstream_timeout",
-                data=response_data
-            )
+
+        # 200 认为成功；其它按HTTP对齐
+        if upstream_status == 200:
+            return APIResponse(success=True, code=200, message="ok")
         else:
-            return TrackResponse(
-                code=0,
-                msg="ok",
-                data=response_data
-            )
-            
+            return APIResponse(success=False, code=upstream_status, message="upstream_error")
+
     except Exception as e:
         logging.error(f"Error dispatching to upstream: {e}")
-        return TrackResponse(
-            code=5000,
-            msg="server_error",
-            data=response_data
-        )
+        return APIResponse(success=False, code=500, message="server_error")

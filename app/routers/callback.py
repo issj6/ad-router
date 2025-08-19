@@ -8,7 +8,7 @@ import logging
 from ..config import CONFIG
 from ..db import get_session
 from ..models import CallbackLog, DispatchLog
-from ..schemas import CallbackResponse
+from ..schemas import APIResponse
 from ..services.router import find_upstream_config, find_downstream_config, get_adapter_config
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import eval_expr, render_template, eval_body_template
@@ -155,7 +155,7 @@ async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream
     
     return status, response
 
-@router.get("/cb/{token}", response_model=CallbackResponse)
+@router.get("/cb/{token}", response_model=APIResponse)
 async def handle_upstream_callback(token: str, request: Request):
     """
     处理上游回调（仅GET）
@@ -206,7 +206,7 @@ async def handle_upstream_callback(token: str, request: Request):
     inbound_adapter = get_adapter_config(upstream_config, "inbound_callback", "event")
     if not inbound_adapter:
         logging.warning(f"No inbound_callback adapter for upstream {up_id}")
-        return CallbackResponse(code=0, msg="no_inbound_adapter")
+        return APIResponse(success=True, code=200, message="no_inbound_adapter")
     
     secrets = upstream_config.get("secrets", {})
     
@@ -299,22 +299,15 @@ async def handle_upstream_callback(token: str, request: Request):
             )
             downstream_status, downstream_response = status, resp
         else:
-            # 兜底：使用下游配置的 outbound_callback
-            downstream_status, downstream_response = await _dispatch_to_downstream(
-                trace_id, udm, downstream_config
-            )
-        
-        # 如果下游分发失败，更新回调日志
-        if downstream_status >= 400 and callback_success:
-            try:
-                async with await get_session() as session:
-                    # 这里简化处理，实际可以用UPDATE语句
-                    pass
-            except Exception:
-                pass
-        
-        return CallbackResponse(code=0, msg="ok")
-        
+            # 无模板则视为无回调需求（直接成功）
+            downstream_status, downstream_response = 200, {"msg": "no_callback_template"}
+
+        # 以HTTP状态对齐
+        if downstream_status == 200:
+            return APIResponse(success=True, code=200, message="ok")
+        else:
+            return APIResponse(success=False, code=downstream_status, message="downstream_error")
+
     except Exception as e:
         logging.error(f"Error dispatching to downstream: {e}")
-        return CallbackResponse(code=5000, msg="server_error")
+        return APIResponse(success=False, code=500, message="server_error")

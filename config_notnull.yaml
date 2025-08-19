@@ -56,17 +56,8 @@ downstreams: []
 
 # 路由配置
 routes:
-  - match_key: "campaign_id"
+  - match_key: "ad_id"
     rules:
-      # NotNull提供的具体广告活动ID
-      - equals: "12345"
-        upstream: "notnull_upstream"
-        downstream: "media_partner_1"
-      
-      - equals: "67890"
-        upstream: "notnull_upstream"
-        downstream: "media_partner_1"
-    
-    # 兜底路由
-    fallback_upstream: "notnull_upstream"
-    fallback_downstream: "media_partner_1"
+      - equals: "10_60_683572_8"
+        upstream: "adapi"
+    fallback_upstream: "adapi"

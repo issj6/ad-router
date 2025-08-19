@@ -11,12 +11,10 @@ class EventLog(Base):
     trace_id: Mapped[str] = mapped_column(String(36), index=True)  # 链路追踪ID
     ds_id: Mapped[str] = mapped_column(String(64), index=True)  # 下游ID
     up_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 上游ID
-    event_type: Mapped[str] = mapped_column(String(16))  # click/imp/event
-    event_name: Mapped[str | None] = mapped_column(String(32), nullable=True)  # install/register/pay...
+    event_type: Mapped[str] = mapped_column(String(16))  # click/imp
     click_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)  # 点击ID
-    ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # 广告ID
-    campaign_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)  # 计划ID
-    ts: Mapped[int] = mapped_column(BigInteger)  # 时间戳
+    ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)  # 广告ID
+    ts: Mapped[int] = mapped_column(BigInteger)  # 时间戳（毫秒）
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)  # IP地址
     ua: Mapped[str | None] = mapped_column(String(512), nullable=True)  # User-Agent
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 原始载荷
@@ -55,6 +53,6 @@ class CallbackLog(Base):
 
 # 创建额外索引以提高查询性能
 Index("idx_event_click", EventLog.click_id)
-Index("idx_event_campaign", EventLog.campaign_id)
+
 Index("idx_dispatch_partner", DispatchLog.partner_id)
 Index("idx_callback_up_ds", CallbackLog.up_id, CallbackLog.ds_id)
