@@ -21,7 +21,7 @@ upstreams:
     description: ""
     adapters:
       outbound:
-        click:
+        click: &click_tpl
           method: "GET"
           url: "http://ad.adapi.cn/click?aid={{aid}}&did={{did}}&os={{os}}&ts={{ts}}&callback={{callback}}&oaid={{oaid}}&imei={{imei}}&android_id={{android_id}}&idfa={{idfa}}&caid={{caid}}&ip={{ip}}&ua={{ua}}&model={{model}}&x={{x}}"
           macros:
@@ -45,6 +45,7 @@ upstreams:
             x: "udm.meta.ext.custom_id | url_encode()"
           timeout_ms: 5000
           retry: {max: 2, backoff_ms: 500}
+      
       # NotNull平台回调处理配置（无验证）
       inbound_callback:
         event:
@@ -61,7 +62,7 @@ upstreams:
     description: ""
     adapters:
       outbound:
-        click: &click_duokaiyou
+        click: &click_tpl_duokaiyou
           method: "GET"
           url: "http://adsense-api.duokaiyou.com/v1/monitor/mr?ca_id={{ad_id}}&idfa={{idfa}}&idfa_md5=&caid={{caid}}&caid_md5=&clickid={{click_id}}&ip={{ip}}&os={{os}}&model={{model}}&os_version={{os_version}}&mac={{mac}}&ts={{ts}}&user_agent={{user_agent}}&callback_url={{callback}}&reporting_type={{reporting_type}}"
           macros:
@@ -87,8 +88,9 @@ upstreams:
             model: "udm.device.model | url_encode()"
           timeout_ms: 5000
           retry: { max: 2, backoff_ms: 500 }
+
         # 合并：imp 与 event 直接复用 click 模板
-        imp: *click_duokaiyou
+        imp: *click_tpl_duokaiyou
 
       # NotNull平台回调处理配置（无验证）
       inbound_callback:
@@ -101,6 +103,9 @@ upstreams:
             "udm.meta.days": "query.days"                    # 留存天数（仅留存事件）
             "udm.time.ts": "udm.time.ts"                       # 使用当前时间戳
 
+# 不需要兜底配置（采用动态回调模板闭环）
+downstreams: []
+
 # 路由配置
 routes:
   - match_key: "ad_id"
@@ -109,3 +114,4 @@ routes:
         upstream: "adapi"
       - equals: "68468c9ade037"
         upstream: "duokaiyou"
+    fallback_upstream: ""

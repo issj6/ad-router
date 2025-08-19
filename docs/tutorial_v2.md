@@ -23,6 +23,67 @@ curl 'http://127.0.0.1:6789/health'
 
 ## 二、关键配置说明
 
+### 2.0 同一家上游、不同广告计划的“自定义常量”管理（纯配置）
+当同一家上游的多个广告计划需要不同的固定自定义字段（如 x/a/sid 等），无需改代码，也无需让下游新增字段。方法是：
+- 定义一份“公共 click 模板”（URL 与公共 macros）
+- 为每个广告计划派生一个“上游实例”（id 不同），仅覆盖该计划的常量值
+- 在 routes 中按 ad_id 精确匹配到对应的上游实例
+
+示例：
+```yaml
+upstreams:
+  - id: "adapi-base"
+    adapters:
+      outbound:
+        click: &adapi_click_tpl
+          method: "GET"
+          url: "http://ad.adapi.cn/click?aid={{aid}}&did={{did}}&os={{os}}&ts={{ts}}&callback={{callback}}&x={{x}}&a={{a}}&sid={{sid}}"
+          macros:
+            aid: "udm.ad.ad_id | url_encode()"
+            did: "const:kpk"
+            os: "udm.device.os | to_upper()"
+            ts: "udm.time.ts"
+            callback: "cb_url() | url_encode()"
+            # 待覆盖的“自定义常量”
+            x:   "const:DEFAULT_X"
+            a:   "const:DEFAULT_A"
+            sid: "const:DEFAULT_SID"
+
+  - id: "adapi-AD_68468c9a"
+    adapters:
+      outbound:
+        click:
+          <<: *adapi_click_tpl
+          macros:
+            <<: *adapi_click_tpl.macros
+            x:   "const:X_FOR_68468c9a"
+            a:   "const:A_FOR_68468c9a"
+            sid: "const:SID_FOR_68468c9a"
+
+  - id: "adapi-AD_10_60_683572_8"
+    adapters:
+      outbound:
+        click:
+          <<: *adapi_click_tpl
+          macros:
+            <<: *adapi_click_tpl.macros
+            x:   "const:X_FOR_10_60_683572_8"
+            a:   "const:A_FOR_10_60_683572_8"
+            sid: "const:SID_FOR_10_60_683572_8"
+
+routes:
+  - match_key: "ad_id"
+    rules:
+      - equals: "68468c9ade037"
+        upstream: "adapi-AD_68468c9a"
+      - equals: "10_60_683572_8"
+        upstream: "adapi-AD_10_60_683572_8"
+    fallback_upstream: "adapi-base"
+```
+说明：公共模板统一维护，派生实例只覆盖常量；下游报文不变，按 ad_id 自动命中对应上游；无需任何代码变更。
+
+
+
 ### 2.1 上游适配（adapters.outbound）
 - 使用 `click` 作为锚点模板 `&click_tpl`；`imp` 复用该模板（*click_tpl）
 - URL 与 macros 通过 DSL 渲染：
