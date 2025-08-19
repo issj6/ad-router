@@ -279,30 +279,8 @@ async def handle_upstream_callback(request: Request):
     except Exception as e:
         logging.error(f"Failed to update downstream fields: {e}")
 
-    # 记录回调日志
+    # 记录回调日志（已取消旧表，统一使用 request_log）
     callback_success = True
-    try:
-        async with await get_session() as session:
-            callback_log = CallbackLog(
-                day=day,
-                trace_id=trace_id,
-                up_id=up_id,
-                ds_id=ds_id,
-                ok=1,  # 先标记为成功，后续如果下游分发失败会更新
-                raw={
-                    "rid": rid,
-                    "query": query_params,
-                    "body": body_data,
-                    "udm": udm,
-                    "callback_template": callback_template,
-                    "final_downstream_url": final_downstream_url
-                }
-            )
-            session.add(callback_log)
-            await session.commit()
-    except Exception as e:
-        logging.error(f"Failed to save callback log: {e}")
-        callback_success = False
 
     # 分发到下游
     try:
