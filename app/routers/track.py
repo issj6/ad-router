@@ -41,8 +41,8 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
         "device": body.device or {},
         "user": body.user or {},
         "net": {
-            "ip": body.ip or (request.client.host if request.client else ""),
-            # 取消兜底：不再从请求头取 UA；下游传空则为空，未传则为空
+            # 取消兜底：不再从请求头或连接信息取 IP/UA；下游传空则为空，未传则为空
+            "ip": body.ip or "",
             "ua": body.ua or ""
         },
         "time": {
@@ -310,15 +310,16 @@ async def track_event(request: Request,
     # 注意：此处不再调用 _save_event_log，改为下方一次性 insert
     pass
 
-    # 准备响应数据
-    # 如果没有找到上游，直接认为成功（我们已记录）
+    # 响应规则变更：
+    #  - 未找到上游：400（not_found）
+    #  - 找到上游但转发失败：按下方返回 500
     if not up_id:
-        return APIResponse(success=True, code=200, message="ok")
+        return APIResponse(success=False, code=400, message="not_found")
 
     # 查找上游配置
     upstream_config = find_upstream_config(up_id, CONFIG)
     if not upstream_config:
-        return APIResponse(success=True, code=200, message="ok")
+        return APIResponse(success=False, code=400, message="not_found")
 
     # 分发到上游
     try:
@@ -330,7 +331,8 @@ async def track_event(request: Request,
         if upstream_status == 200:
             return APIResponse(success=True, code=200, message="ok")
         else:
-            return APIResponse(success=False, code=upstream_status, message="upstream_error")
+            # 非200均视为上游失败，统一返回500
+            return APIResponse(success=False, code=500, message="network_error")
 
     except Exception as e:
         logging.error(f"Error dispatching to upstream: {e}")
