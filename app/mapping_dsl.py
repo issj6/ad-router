@@ -66,15 +66,20 @@ def _apply_function(val: Any, fn: str) -> Any:
             pass
         return val
     elif fn == "floor()":
-        # 向下取整：提取数字（含小数），转为整数；无法解析则返回默认 14
+        # 向下取整：仅当值是“纯数字字符串（可含小数）”或数值类型时生效；否则返回默认 "14"
+        # 合法示例："13", "13.7", 13, 13.7
+        # 非法示例："ABC123", "v13.1", "13.1beta"
         try:
             if val is None:
                 return "14"
+            # 数值类型直接处理
+            if isinstance(val, (int, float)):
+                return str(int(float(val)))
+            # 字符串：必须为整串纯数字/小数
             s = str(val).strip()
-            m = re.search(r"\d+(?:\.\d+)?", s)
-            if not m:
+            if not re.fullmatch(r"\d+(?:\.\d+)?", s):
                 return "14"
-            num = float(m.group(0))
+            num = float(s)
             return str(int(num))
         except Exception:
             return "14"
