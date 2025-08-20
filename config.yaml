@@ -73,7 +73,7 @@ upstreams:
             androidid_md5: "udm.device.android_id | hash_md5() | to_upper()"
             oaid: "udm.device.oaid | url_encode()"
             oaid_md5: "udm.device.oaid | hash_md5() | to_upper()"
-            click_id: "udm.click.id"
+            click_id: "uuid_v4()"
             ip: "udm.net.ip | url_encode()"
             os: "udm.device.os | to_lower()"
             model: "udm.device.model | url_encode()"

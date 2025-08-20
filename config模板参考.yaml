@@ -73,7 +73,7 @@ upstreams:
             mac: "udm.device.mac | url_encode()"
             ts: "udm.time.ts"
             callback: "cb_url() | url_encode()"
-            click_id: "udm.click.id"
+            click_id: "uuid_v4()"
             reporting_type: "udm.event.type"
             # Android
             oaid: "udm.device.oaid | url_encode()"

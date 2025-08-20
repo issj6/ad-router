@@ -3,6 +3,14 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 
+# 自动加载.env文件
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # 加载项目根目录的.env文件
+except ImportError:
+    # 如果没有安装python-dotenv，给出提示
+    pass
+
 Base = declarative_base()
 
 # 全局 MySQL 异步引擎与会话
@@ -18,9 +26,26 @@ MYSQL_DB = os.getenv("MYSQL_DB")
 
 # 验证必需的环境变量
 if not all([MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB]):
+    missing_vars = []
+    if not MYSQL_HOST: missing_vars.append("MYSQL_HOST")
+    if not MYSQL_USER: missing_vars.append("MYSQL_USER")
+    if not MYSQL_PASSWORD: missing_vars.append("MYSQL_PASSWORD")
+    if not MYSQL_DB: missing_vars.append("MYSQL_DB")
+    
     raise ValueError(
-        "Missing required database environment variables. "
-        "Please set: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB"
+        f"Missing required database environment variables: {', '.join(missing_vars)}\n"
+        "\nPlease set them using one of these methods:\n"
+        "1. Create a .env file in project root with:\n"
+        "   MYSQL_HOST=your_host\n"
+        "   MYSQL_USER=your_user\n"
+        "   MYSQL_PASSWORD=your_password\n"
+        "   MYSQL_DB=your_database\n"
+        "\n2. Export environment variables:\n"
+        "   export MYSQL_HOST=your_host\n"
+        "   export MYSQL_USER=your_user\n"
+        "   export MYSQL_PASSWORD=your_password\n"
+        "   export MYSQL_DB=your_database\n"
+        "\n3. Use Docker with --env-file .env"
     )
 
 async def _prepare_engine() -> AsyncEngine:

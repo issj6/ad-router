@@ -8,7 +8,6 @@ class TrackRequest(BaseModel):
             "event_type": "click",
             "ad_id": "ad_123",
             "channel_id": "ch_01",
-            "click_id": "ck_abc123",
             "ts": 1734508800000,
             "ip": "1.2.3.4",
             "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)",
@@ -32,8 +31,7 @@ class TrackRequest(BaseModel):
     ad_id: str = Field(..., description="广告ID")
     channel_id: Optional[str] = Field(None, description="渠道ID")
 
-    # 点击相关字段
-    click_id: Optional[str] = Field(None, description="点击ID，click 推荐必传；imp 可选")
+
 
     # 时间和网络字段
     ts: Optional[int] = Field(None, description="时间戳（毫秒），不传则使用服务器时间")

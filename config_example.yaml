@@ -18,7 +18,7 @@ upstreams:
           macros:
             aid: "udm.ad.ad_id | url_encode()"
             cid: "udm.ad.campaign_id | url_encode()"
-            clid: "udm.click.id | url_encode()"
+            clid: "uuid_v4()"
             ts: "udm.time.ts"
             cb: "cb_url()"
             sig: "hmac_sha256(secret_ref('secret'), join('&',[aid,cid,clid,ts]))"
@@ -31,7 +31,7 @@ upstreams:
         event:
           source: "query"
           field_map:
-            "udm.click.id": "query.clid | query._CLICK_ID_"
+            "udm.click.id": "uuid_v4()"
             "udm.event.type": "const:event"
             "udm.event.name": "query._EVENT_"
             "udm.meta.amount": "query._AMOUNT_"

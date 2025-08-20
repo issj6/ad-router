@@ -100,10 +100,10 @@ async def handle_upstream_callback(request: Request, response: Response):
     # 注意：上游ID/下游ID 可以不从token取，按 inbound 映射后如需写日志可从UDM取；此处保持最小改动
     up_id = ""
     ds_id = ""
-    click_id = None
+
     callback_template = None
 
-    # 根据 rid 从统一表获取上下文（原始模板已不再保存在新表中，这里仅尝试获取 ds_id/up_id/click_id）
+    # 根据 rid 从统一表获取上下文（原始模板已不再保存在新表中，这里仅尝试获取 ds_id/up_id）
     try:
         async with await get_session() as session:
             stmt = select(RequestLog).where(RequestLog.rid == rid)
@@ -112,7 +112,6 @@ async def handle_upstream_callback(request: Request, response: Response):
             if row:
                 ds_id = row.ds_id or ""
                 up_id = row.up_id or ""
-                click_id = row.click_id or None
                 # 从统一表的上报原始参数中恢复下游回调模板
                 try:
                     upload = row.upload_params or {}
@@ -168,8 +167,6 @@ async def handle_upstream_callback(request: Request, response: Response):
     udm.setdefault("click", {})
     udm["meta"]["upstream_id"] = up_id
     udm["meta"]["downstream_id"] = ds_id
-    if click_id:
-        udm["click"]["id"] = click_id
 
     # 如果token里没有带回调模板，可按需从数据库查（此处先尝试用token里的）
     if not callback_template:

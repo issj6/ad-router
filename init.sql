@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS request_log (
     event_type VARCHAR(16) NOT NULL,
     ad_id VARCHAR(128) NULL,
     channel_id VARCHAR(64) NULL,
-    click_id VARCHAR(128) NULL,
+
     ts BIGINT NOT NULL,
     os VARCHAR(16) NULL,
     upload_params JSON NULL,
@@ -30,6 +30,6 @@ CREATE TABLE IF NOT EXISTS request_log (
     INDEX idx_ds_id (ds_id),
     INDEX idx_up_id (up_id),
     INDEX idx_ad_id (ad_id),
-    INDEX idx_click_id (click_id),
+
     INDEX idx_req_ds_ad (ds_id, ad_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

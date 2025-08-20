@@ -32,7 +32,6 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
             "type": body.event_type
         },
         "click": {
-            "id": body.click_id,
             "source": ds_id or body.ds_id
         },
         "ad": {
@@ -83,9 +82,8 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     callback_base = CONFIG["settings"]["callback_base"].rstrip("/")
 
     def cb_url():
-        # 新规则：若幂等复用存在，则使用复用rid；否则用本次trace_id
-        rid = udm.get("meta", {}).get("reuse_rid") or trace_id
-        base = f"{callback_base}/cb?rid={rid}"
+        # 直接使用当前 trace_id 作为 rid
+        base = f"{callback_base}/cb?rid={trace_id}"
         try:
             if callback_template:
                 from urllib.parse import urlparse
@@ -102,20 +100,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     url = render_template(adapter["url"], adapter.get("macros", {}), ctx, secrets, helpers)
     logging.info(f"[to-upstream] click url: {url}")
 
-    # 将上游最终URL保存（使用ORM以确保JSON/类型适配），并记录失败原因
-    try:
-        async with await get_session() as session:
-            rid_to_use = (udm.get("meta", {}).get("reuse_rid") or trace_id)
-            from sqlalchemy import select
-            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
-            obj = res.scalar_one_or_none()
-            if obj:
-                obj.upstream_url = url
-                await session.commit()
-            else:
-                logging.warning(f"RequestLog not found to set upstream_url, rid={rid_to_use}")
-    except Exception as e:
-        logging.error(f"Failed to update upstream_url: {e}")
+
 
     method = adapter.get("method", "GET")
     headers = adapter.get("headers")
@@ -147,47 +132,40 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         pass
     except Exception as e:
         logging.error(f"Error dispatching to upstream for trace_id {trace_id}: {e}")
-    # 一次性 INSERT：准备所有字段后写入（若不存在）；若幂等复用，则仅确保 upstream_url 已写入
+    # 一次性 INSERT：准备所有字段后写入，包含 upstream_url
     try:
         async with await get_session() as session:
-            from sqlalchemy import select
-            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
-            obj = res.scalar_one_or_none()
-            if obj is None:
-                # 生成格式化时间（上海时区）
-                from datetime import datetime, timezone, timedelta
-                shanghai_tz = timezone(timedelta(hours=8))
-                track_time_formatted = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+            # 生成格式化时间（上海时区）
+            from datetime import datetime, timezone, timedelta
+            shanghai_tz = timezone(timedelta(hours=8))
+            track_time_formatted = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-                reqlog = RequestLog(
-                    rid=rid_to_use,
-                    ds_id=udm["meta"]["downstream_id"],
-                    up_id=udm["meta"]["upstream_id"],
-                    event_type=udm["event"]["type"],
-                    ad_id=udm["ad"].get("ad_id"),
-                    channel_id=udm["ad"].get("channel_id"),
-                    click_id=udm["click"].get("id"),
-                    ts=udm["time"]["ts"],
-                    os=(udm.get("device") or {}).get("os"),
-                    upload_params={
-                        "query": dict(udm),
-                        "callback_template": callback_template,
-                    },
-                    callback_params=None,
-                    upstream_url=url,
-                    downstream_url=None,
-                    track_time=track_time_formatted,
-                    is_callback_sent=0,
-                    callback_time=None,
-                    callback_event_type=None,
-                )
-                session.add(reqlog)
-                await session.commit()
-            else:
-                # 已存在（幂等），上面已写入 upstream_url
-                pass
+            reqlog = RequestLog(
+                rid=trace_id,  # 直接使用新生成的 trace_id，不再有复用逻辑
+                ds_id=udm["meta"]["downstream_id"],
+                up_id=udm["meta"]["upstream_id"],
+                event_type=udm["event"]["type"],
+                ad_id=udm["ad"].get("ad_id"),
+                channel_id=udm["ad"].get("channel_id"),
+
+                ts=udm["time"]["ts"],
+                os=(udm.get("device") or {}).get("os"),
+                upload_params={
+                    "query": dict(udm),
+                    "callback_template": callback_template,
+                },
+                callback_params=None,
+                upstream_url=url,
+                downstream_url=None,
+                track_time=track_time_formatted,
+                is_callback_sent=0,
+                callback_time=None,
+                callback_event_type=None,
+            )
+            session.add(reqlog)
+            await session.commit()
     except Exception as e:
-        logging.error(f"Failed to insert/update RequestLog: {e}")
+        logging.error(f"Failed to insert RequestLog: {e}")
 
     # 返回状态和响应（供调用方使用）
     return status, response
@@ -198,7 +176,6 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
 async def track_event(request: Request, response: Response,
                      ds_id: str,
                      event_type: str,
-                     click_id: str = None,
                      ad_id: str = None,
                      channel_id: str = None,
                      ts: int = None,
@@ -260,7 +237,6 @@ async def track_event(request: Request, response: Response,
         event_type=event_type,
         ad_id=ad_id,
         channel_id=channel_id,
-        click_id=click_id,
         ts=ts,
         ip=ip,
         ua=ua,
@@ -281,36 +257,14 @@ async def track_event(request: Request, response: Response,
     # 构造初始UDM用于路由
     udm_for_routing = _make_udm(body, request)
     
-    # 幂等预查：如已存在相同 (ds_id,event_type,click_id) 记录，复用其 rid
-    rid_existing = None
-    try:
-        async with await get_session() as session:
-            from sqlalchemy import select
-            res = await session.execute(
-                select(RequestLog.rid)
-                .where(
-                    (RequestLog.ds_id == udm_for_routing["meta"]["downstream_id"]) &
-                    (RequestLog.event_type == udm_for_routing["event"]["type"]) &
-                    (RequestLog.click_id == udm_for_routing["click"]["id"])
-                )
-                .order_by(RequestLog.id.desc())
-                .limit(1)
-            )
-            row = res.first()
-            if row and row[0]:
-                rid_existing = row[0]
-    except Exception as e:
-        logging.warning(f"Failed to check existing rid: {e}")
-
-    rid_to_use = rid_existing or trace_id
+    # 新的幂等性设计：每次生成新的 rid，不再复用
+    rid_to_use = trace_id
 
     # 路由选择
     up_id, ds_out = choose_route(udm_for_routing, CONFIG)
 
-    # 构造最终UDM，如果存在幂等复用，添加到meta中
+    # 构造最终UDM
     udm = _make_udm(body, request, up_id, body.ds_id)
-    if rid_existing:
-        udm["meta"]["reuse_rid"] = rid_existing
 
     # 直接一次写入：准备所有需要的字段，等待渲染出上游URL后，一次性保存
     # 注意：此处不再调用 _save_event_log，改为下方一次性 insert

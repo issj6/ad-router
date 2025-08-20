@@ -4,6 +4,7 @@ import hmac
 import time
 import re
 import logging
+import uuid
 from typing import Any, Dict, Union
 
 def _get_path(ctx: Dict[str, Any], path: str) -> Any:
@@ -84,6 +85,9 @@ def _apply_function(val: Any, fn: str) -> Any:
             return str(int(num))
         except Exception:
             return ""
+    elif fn == "uuid()" or fn == "uuid_v4()":
+        # 生成 UUID v4，忽略输入值
+        return str(uuid.uuid4())
 
     return val
 
@@ -100,6 +104,22 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
     - path.to.value - 路径访问
     """
     expr = expr.strip()
+    
+    # 管道操作优先处理（避免与其他语法冲突）
+    if "|" in expr:
+        parts = [x.strip() for x in expr.split("|")]
+        val = eval_expr(parts[0], ctx, secrets, helpers)
+
+        for fn in parts[1:]:
+            # 处理coalesce函数
+            if fn.startswith("coalesce("):
+                if val is None or val == "":
+                    inner = fn[len("coalesce("):-1]
+                    val = inner.strip("'\"")
+            else:
+                val = _apply_function(val, fn)
+
+        return val
     
     # 常量值
     if expr.startswith("const:"):
@@ -176,21 +196,7 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
         except Exception:
             return ""
 
-    # 管道操作 "path | fn() | fn2()" —— 优先处理管道，再处理具体函数（如 cb_url）
-    if "|" in expr:
-        parts = [x.strip() for x in expr.split("|")]
-        val = eval_expr(parts[0], ctx, secrets, helpers)
 
-        for fn in parts[1:]:
-            # 处理coalesce函数
-            if fn.startswith("coalesce("):
-                if val is None or val == "":
-                    inner = fn[len("coalesce("):-1]
-                    val = inner.strip("'\"")
-            else:
-                val = _apply_function(val, fn)
-
-        return val
 
     # 回调URL助手（放在管道处理之后，保证如 cb_url() | url_encode() 生效）
     if expr.startswith("cb_url("):
@@ -199,6 +205,10 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
     # 当前时间戳助手（毫秒）
     if expr.startswith("now_ms("):
         return int(time.time() * 1000)
+    
+    # UUID v4 生成
+    if expr.startswith("uuid_v4(") or expr.startswith("uuid("):
+        return str(uuid.uuid4())
     
     # 路径访问
     if "." in expr:
