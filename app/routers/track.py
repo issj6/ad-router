@@ -261,7 +261,7 @@ async def track_event(request: Request, response: Response,
     rid_to_use = trace_id
 
     # 路由选择
-    up_id, ds_out, enabled = choose_route(udm_for_routing, CONFIG)
+    up_id, ds_out, enabled, throttle = choose_route(udm_for_routing, CONFIG)
     
     # 检查路由是否启用
     if not enabled:

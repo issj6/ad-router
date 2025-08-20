@@ -9,7 +9,7 @@ from ..config import CONFIG
 from ..db import get_session
 from ..models import RequestLog
 from ..schemas import APIResponse
-from ..services.router import find_upstream_config, get_adapter_config
+from ..services.router import find_upstream_config, get_adapter_config, choose_route, should_throttle_callback
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import eval_expr, render_template, eval_body_template
 from sqlalchemy import select, text
@@ -167,6 +167,36 @@ async def handle_upstream_callback(request: Request, response: Response):
     udm.setdefault("click", {})
     udm["meta"]["upstream_id"] = up_id
     udm["meta"]["downstream_id"] = ds_id
+    
+    # 根据原始请求数据获取路由配置和扣量设置
+    throttle_rate = 0.0  # 默认不扣量
+    try:
+        # 从数据库获取的信息重建 UDM 用于路由判断
+        if row:
+            # 构造用于路由判断的 UDM
+            routing_udm = {
+                "ad": {
+                    "ad_id": row.ad_id,
+                    "campaign_id": ""  # 这里可能需要从 upload_params 中获取
+                },
+                "meta": {
+                    "downstream_id": row.ds_id
+                }
+            }
+            
+            # 尝试从上报参数中获取更多信息
+            if row.upload_params and "query" in row.upload_params:
+                query_data = row.upload_params["query"]
+                if isinstance(query_data, dict):
+                    ad_info = query_data.get("ad", {})
+                    if isinstance(ad_info, dict):
+                        routing_udm["ad"]["campaign_id"] = ad_info.get("campaign_id", "")
+            
+            # 获取路由配置和扣量设置
+            _, _, route_enabled, throttle_rate = choose_route(routing_udm, CONFIG)
+    except Exception as e:
+        logging.warning(f"Failed to get throttle rate for rid {rid}: {e}")
+        throttle_rate = 0.0
 
     # 如果token里没有带回调模板，可按需从数据库查（此处先尝试用token里的）
     if not callback_template:
@@ -205,13 +235,17 @@ async def handle_upstream_callback(request: Request, response: Response):
     # 自定义日志：打印最终回拨下游URL
     logging.info(f"[to-downstream] callback url: {final_downstream_url}")
 
+    # 判断是否需要扣量
+    should_throttle = should_throttle_callback(rid, throttle_rate)
+    
     # 记录回调原始参数与最终回拨URL到统一表（使用ORM保存，便于调试）
     try:
         async with await get_session() as session:
             res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
             obj = res.scalar_one_or_none()
             if obj:
-                obj.callback_params = {"query": query_params, "body": body_data}
+                callback_params = {"query": query_params, "body": body_data}
+                obj.callback_params = callback_params
                 obj.downstream_url = final_downstream_url
                 obj.is_callback_sent = 0
                 obj.callback_event_type = (udm.get("event") or {}).get("name")
@@ -220,6 +254,27 @@ async def handle_upstream_callback(request: Request, response: Response):
                 logging.warning(f"RequestLog not found to set downstream_url, rid={rid}")
     except Exception as e:
         logging.error(f"Failed to update downstream fields: {e}")
+
+    # 如果命中扣量，直接返回200给上游，不转发给下游
+    if should_throttle:
+        logging.info(f"[throttle] callback throttled, rid={rid}, throttle_rate={throttle_rate}")
+        
+        # 更新数据库状态为扣量状态 (is_callback_sent = 2)
+        try:
+            async with await get_session() as session:
+                res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
+                obj = res.scalar_one_or_none()
+                if obj:
+                    obj.is_callback_sent = 2  # 设置为扣量状态
+                    # 设置扣量时间
+                    from datetime import datetime, timezone, timedelta
+                    shanghai_tz = timezone(timedelta(hours=8))
+                    obj.callback_time = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+                    await session.commit()
+        except Exception as e:
+            logging.error(f"Failed to update throttle status: {e}")
+        
+        return APIResponse(success=True, code=200, message="ok")
 
     # 记录回调日志（已取消旧表，统一使用 request_log）
     callback_success = True

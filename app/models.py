@@ -29,7 +29,7 @@ class RequestLog(Base):
     track_time: Mapped[str | None] = mapped_column(String(32), nullable=True)  # track创建时间（上海时区）
 
     # 回调状态
-    is_callback_sent: Mapped[int] = mapped_column(Integer, default=0)  # 0/1
+    is_callback_sent: Mapped[int] = mapped_column(Integer, default=0)  # 0:未回拨, 1:已回拨, 2:被扣量
     callback_time: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 回调时间（上海时区）
     callback_event_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

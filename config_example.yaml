@@ -50,10 +50,13 @@ routes:
         upstream: "up_demo"
         downstream: "ds_demo"
         enabled: true  # 开启该链接
+        throttle: 0.0  # 不扣量
       - equals: "cmp_789"
         upstream: "up_demo"
         downstream: "ds_demo"
         enabled: false  # 关闭该链接，将返回400"链接已关闭"
+        throttle: 0.3  # 扣量30%（仅当enabled为true时生效）
     fallback_upstream: "up_demo"
     fallback_downstream: "ds_demo"
     fallback_enabled: true  # 兜底配置是否启用
+    fallback_throttle: 0.1  # 兜底配置扣量10%
