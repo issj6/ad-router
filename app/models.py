@@ -12,6 +12,7 @@ class RequestLog(Base):
     up_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(16))  # click/imp
     ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     click_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     ts: Mapped[int] = mapped_column(BigInteger)  # 毫秒
     os: Mapped[str | None] = mapped_column(String(16), nullable=True)

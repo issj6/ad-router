@@ -262,7 +262,7 @@ async def handle_upstream_callback(request: Request):
         if downstream_status == 200:
             return APIResponse(success=True, code=200, message="ok")
         else:
-            return APIResponse(success=False, code=downstream_status, message="downstream_error")
+            return APIResponse(success=False, code=downstream_status, message="server_config_error")
 
     except Exception as e:
         logging.error(f"Error dispatching to downstream: {e}")

@@ -92,7 +92,7 @@ upstreams:
           source: "query"  # 回调参数来源于URL查询参数
           field_map:
             "udm.event.type": "const:event"                    # 固定为event类型
-            "udm.event.name": "query.event_type"                  # 事件类型：activated/reg/pay                     # 使用当前时间戳
+            "udm.event.name": "query.event_type"              # 事件类型：activated/reg/pay                     # 使用当前时间戳
 
 # 路由配置
 routes:

@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS request_log (
     up_id VARCHAR(64) NULL,
     event_type VARCHAR(16) NOT NULL,
     ad_id VARCHAR(128) NULL,
+    channel_id VARCHAR(64) NULL,
     click_id VARCHAR(128) NULL,
     ts BIGINT NOT NULL,
     os VARCHAR(16) NULL,

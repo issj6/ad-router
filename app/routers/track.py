@@ -36,7 +36,8 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
             "source": ds_id or body.ds_id
         },
         "ad": {
-            "ad_id": body.ad_id
+            "ad_id": body.ad_id,
+            "channel_id": body.channel_id
         },
         "device": body.device or {},
         "user": body.user or {},
@@ -163,8 +164,9 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
                     ds_id=udm["meta"]["downstream_id"],
                     up_id=udm["meta"]["upstream_id"],
                     event_type=udm["event"]["type"],
-                    ad_id=udm["ad"]["ad_id"],
-                    click_id=udm["click"]["id"],
+                    ad_id=udm["ad"].get("ad_id"),
+                    channel_id=udm["ad"].get("channel_id"),
+                    click_id=udm["click"].get("id"),
                     ts=udm["time"]["ts"],
                     os=(udm.get("device") or {}).get("os"),
                     upload_params={
@@ -198,6 +200,7 @@ async def track_event(request: Request,
                      event_type: str,
                      click_id: str = None,
                      ad_id: str = None,
+                     channel_id: str = None,
                      ts: int = None,
                      ip: str = None,
                      ua: str = None,
@@ -255,6 +258,7 @@ async def track_event(request: Request,
         ds_id=ds_id,
         event_type=event_type,
         ad_id=ad_id,
+        channel_id=channel_id,
         click_id=click_id,
         ts=ts,
         ip=ip,

@@ -7,6 +7,7 @@ class TrackRequest(BaseModel):
             "ds_id": "ds_demo",
             "event_type": "click",
             "ad_id": "ad_123",
+            "channel_id": "ch_01",
             "click_id": "ck_abc123",
             "ts": 1734508800000,
             "ip": "1.2.3.4",
@@ -29,6 +30,7 @@ class TrackRequest(BaseModel):
 
     # 广告相关字段
     ad_id: str = Field(..., description="广告ID")
+    channel_id: Optional[str] = Field(None, description="渠道ID")
 
     # 点击相关字段
     click_id: Optional[str] = Field(None, description="点击ID，click 推荐必传；imp 可选")
