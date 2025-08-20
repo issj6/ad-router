@@ -55,7 +55,17 @@ def _apply_function(val: Any, fn: str) -> Any:
         return hashlib.md5(str(val).encode()).hexdigest() if val is not None else val
     elif fn == "hash_sha256()":
         return hashlib.sha256(str(val).encode()).hexdigest() if val is not None else val
-    
+    elif fn.startswith("replace("):
+        # replace('from','to')
+        try:
+            m = re.match(r"replace\(\s*'([^']*)'\s*,\s*'([^']*)'\s*\)", fn)
+            if m:
+                _from, _to = m.group(1), m.group(2)
+                return (str(val) if val is not None else val).replace(_from, _to) if val is not None else val
+        except Exception:
+            pass
+        return val
+
     return val
 
 def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: Dict[str, Any]) -> Any:

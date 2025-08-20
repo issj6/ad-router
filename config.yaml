@@ -127,10 +127,16 @@ upstreams:
             mac: "udm.device.mac | url_encode()"
             ts: "udm.time.ts"
             user_agent: "udm.net.ua | normalize_encode()"
-            callback: "cb_url() | url_encode()"
+            callback: "cb_url() | replace('__EVENT__','__EVENT_TYPE__') | url_encode()"
             reporting_type: "udm.event.type"
           timeout_ms: 3000
           retry: { max: 2, backoff_ms: 500 }
+      inbound_callback:
+        event:
+          source: "query"  # 回调参数来源于URL查询参数
+          field_map:
+            "udm.event.type": "const:event"                    # 固定为event类型
+            "udm.event.name": "query.event_type"                  # 事件类型：activated/reg/pay                     # 使用当前时间戳
 
 # 路由配置
 routes:
