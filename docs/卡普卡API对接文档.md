@@ -25,6 +25,7 @@
     | ua                | string | User-Agent（需一次URL编码）                                  | 否       | Mozilla/5.0...                                               |
     | device_os         | string | 操作系统（ANDROID、IOS二选一）                               | 是       | IOS / ANDROID                                                |
     | device_model      | string | 设备型号                                                     | 否       | iPhone13,2                                                   |
+| device_brand      | string | 设备品牌                                                     | 否       | Apple / HUAWEI                                               |
     | device_idfa       | string | iOS广告标识符 （IOS时与device_caid至少填其一）               | 是       | ABCD-1234-...                                                |
     | device_caid       | string | iOS CAID （IOS时与device_idfa至少填其一）                    | 是       | caid_xxx                                                     |
     | device_oaid       | string | Android OAID  （ANDROID时OAID、IMEI、ANDROID ID至少填其一）  | 是       | oaid_xxx                                                     |

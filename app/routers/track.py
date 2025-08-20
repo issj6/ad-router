@@ -203,6 +203,7 @@ async def track_event(request: Request,
                      # 设备信息
                      device_os: str = None,
                      device_model: str = None,
+                     device_brand: str = None,
                      device_idfa: str = None,
                      device_caid: str = None,
                      device_oaid: str = None,
@@ -232,6 +233,7 @@ async def track_event(request: Request,
     device = {}
     if device_os: device["os"] = device_os
     if device_model: device["model"] = device_model
+    if device_brand: device["brand"] = device_brand
     if device_idfa: device["idfa"] = device_idfa
     if device_caid: device["caid"] = device_caid
     if device_oaid: device["oaid"] = device_oaid
