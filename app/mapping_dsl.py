@@ -147,11 +147,7 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
         except Exception:
             return ""
 
-    # 回调URL助手
-    if expr.startswith("cb_url("):
-        return helpers.get("cb_url", lambda: "")()
-    
-    # 管道操作 "path | fn() | fn2()"
+    # 管道操作 "path | fn() | fn2()" —— 优先处理管道，再处理具体函数（如 cb_url）
     if "|" in expr:
         parts = [x.strip() for x in expr.split("|")]
         val = eval_expr(parts[0], ctx, secrets, helpers)
@@ -166,6 +162,10 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
                 val = _apply_function(val, fn)
 
         return val
+
+    # 回调URL助手（放在管道处理之后，保证如 cb_url() | url_encode() 生效）
+    if expr.startswith("cb_url("):
+        return helpers.get("cb_url", lambda: "")()
     
     # 路径访问
     if "." in expr:

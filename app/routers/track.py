@@ -314,12 +314,12 @@ async def track_event(request: Request,
     #  - 未找到上游：400（not_found）
     #  - 找到上游但转发失败：按下方返回 500
     if not up_id:
-        return APIResponse(success=False, code=400, message="not_found")
+        return APIResponse(success=False, code=400, message="链接已关闭")
 
     # 查找上游配置
     upstream_config = find_upstream_config(up_id, CONFIG)
     if not upstream_config:
-        return APIResponse(success=False, code=400, message="not_found")
+        return APIResponse(success=False, code=400, message="链接已关闭")
 
     # 分发到上游
     try:
