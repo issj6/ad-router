@@ -16,13 +16,11 @@ from ..services.router import choose_route, find_upstream_config, get_adapter_co
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
-from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+
 
 router = APIRouter()
 
-def _today() -> str:
-    """获取今日日期字符串 YYYYMMDD"""
-    return datetime.datetime.now().strftime("%Y%m%d")
 
 def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: str = None) -> Dict[str, Any]:
     """构造统一数据模型(UDM)"""
@@ -56,58 +54,6 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
         }
     }
 
-async def _save_event_log(trace_id: str, udm: Dict[str, Any], body: TrackRequest, callback_template: str | None = None):
-    """保存事件日志"""
-    day = _today()
-
-    try:
-        async with await get_session() as session:
-            # 统一表写入
-            reqlog = RequestLog(
-                rid=trace_id,
-                ds_id=udm["meta"]["downstream_id"],
-                up_id=udm["meta"]["upstream_id"],
-                event_type=udm["event"]["type"],
-                ad_id=udm["ad"]["ad_id"],
-                click_id=udm["click"]["id"],
-                ts=udm["time"]["ts"],
-                os=(udm.get("device") or {}).get("os"),
-                upload_params={
-                    "query": dict(body.dict() if hasattr(body, 'dict') else {}),
-                    "callback_template": callback_template,
-                },
-                callback_params=None,
-                upstream_url=None,
-                downstream_url=None,
-                is_callback_sent=0,
-                callback_time=None,
-                callback_event_type=None,
-            )
-            session.add(reqlog)
-            await session.commit()
-
-    except IntegrityError:
-        # 幂等：重复上报，复用已存在记录的 rid
-        logging.info("duplicate event ignored (idempotent), try reuse rid")
-        try:
-            async with await get_session() as session:
-                # 通过关键键查找已存在记录（基于我们刚插入失败的字段）
-                # 注意：SQLite不支持 WHERE 子句上的函数索引，这里直接按三元组+近似时间范围查
-                # 简化：根据 ds_id/event_type/click_id 最近一条作为复用对象
-                from sqlalchemy import text
-                q = text(
-                    "SELECT rid FROM request_log WHERE ds_id=:ds AND event_type=:et AND click_id=:cid ORDER BY id DESC LIMIT 1"
-                )
-                res = await session.execute(q, {"ds": udm["meta"]["downstream_id"], "et": udm["event"]["type"], "cid": udm["click"]["id"]})
-                row = res.first()
-                if row and row[0]:
-                    # 将当前 trace_id 替换为已存在的 rid，用于生成 cb_url()
-                    udm["meta"]["reuse_rid"] = row[0]
-        except Exception:
-            pass
-    except Exception as e:
-        # 其它数据库错误不影响主流程，但要记录日志
-        logging.error(f"Failed to save event log: {e}")
 
 async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_config: Dict[str, Any],
                                event_type: str, callback_template: str | None = None) -> tuple[int, Any]:
@@ -206,6 +152,11 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
             res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
             obj = res.scalar_one_or_none()
             if obj is None:
+                # 生成格式化时间（上海时区）
+                from datetime import datetime, timezone, timedelta
+                shanghai_tz = timezone(timedelta(hours=8))
+                track_time_formatted = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+
                 reqlog = RequestLog(
                     rid=rid_to_use,
                     ds_id=udm["meta"]["downstream_id"],
@@ -222,6 +173,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
                     callback_params=None,
                     upstream_url=url,
                     downstream_url=None,
+                    track_time=track_time_formatted,
                     is_callback_sent=0,
                     callback_time=None,
                     callback_event_type=None,
@@ -256,7 +208,7 @@ async def track_event(request: Request,
                      device_oaid: str = None,
                      device_imei: str = None,
                      device_android_id: str = None,
-                     os_version: str = None,
+                     device_os_version: str = None,
                      device_mac: str = None,
                      # 用户信息
                      user_phone_md5: str = None,
@@ -285,7 +237,7 @@ async def track_event(request: Request,
     if device_oaid: device["oaid"] = device_oaid
     if device_imei: device["imei"] = device_imei
     if device_android_id: device["android_id"] = device_android_id
-    if os_version: device["os_version"] = os_version
+    if device_os_version: device["os_version"] = device_os_version
     if device_mac: device["mac"] = device_mac
 
     user = {}
@@ -306,7 +258,8 @@ async def track_event(request: Request,
         ua=ua,
         device=device or None,
         user=user or None,
-        ext=ext or None
+        ext=ext or None,
+        device_os_version=device_os_version
     )
 
     # 解析并保存下游回调模板（URL编码→解码后保存）
@@ -314,9 +267,16 @@ async def track_event(request: Request,
     rid_existing = None
     try:
         async with await get_session() as session:
+            from sqlalchemy import select
             res = await session.execute(
-                text("SELECT rid FROM request_log WHERE ds_id=:ds AND event_type=:et AND click_id=:cid ORDER BY id DESC LIMIT 1"),
-                {"ds": udm["meta"]["downstream_id"], "et": udm["event"]["type"], "cid": udm["click"]["id"]}
+                select(RequestLog.rid)
+                .where(
+                    (RequestLog.ds_id == udm["meta"]["downstream_id"]) &
+                    (RequestLog.event_type == udm["event"]["type"]) &
+                    (RequestLog.click_id == udm["click"]["id"])
+                )
+                .order_by(RequestLog.id.desc())
+                .limit(1)
             )
             row = res.first()
             if row and row[0]:

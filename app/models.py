@@ -24,9 +24,12 @@ class RequestLog(Base):
     upstream_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)    # 上报上游最终URL
     downstream_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)  # 最终回拨下游URL
 
+    # 时间字段
+    track_time: Mapped[str | None] = mapped_column(String(32), nullable=True)  # track创建时间（上海时区）
+
     # 回调状态
     is_callback_sent: Mapped[int] = mapped_column(Integer, default=0)  # 0/1
-    callback_time: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    callback_time: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 回调时间（上海时区）
     callback_event_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 # 索引

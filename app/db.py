@@ -10,10 +10,10 @@ _engine: Optional[AsyncEngine] = None
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
 # 默认使用你提供的连接信息；也支持通过环境变量覆盖
-MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_HOST = os.getenv("MYSQL_HOST", "222.186.41.7")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3316"))
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "123456")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "Yyy443556.0")
 MYSQL_DB = os.getenv("MYSQL_DB", "ad_router")
 
 async def _prepare_engine() -> AsyncEngine:

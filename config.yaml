@@ -1,5 +1,5 @@
 settings:
-  callback_base: "http://127.0.0.1:6789"
+  callback_base: "http://ikpk.notnull.cc:6789"
   timezone: "Asia/Shanghai"
   data_dir: "./data/sqlite"
   app_secret: "notnull_callback_secret_2024"

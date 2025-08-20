@@ -19,11 +19,6 @@ import urllib.parse
 router = APIRouter()
 
 
-def _today() -> str:
-    """获取今日日期字符串 YYYYMMDD"""
-    return datetime.datetime.now().strftime("%Y%m%d")
-
-
 def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets: Dict[str, str]) -> Dict[str, Any]:
     """映射入站字段到UDM"""
     udm = {
@@ -90,57 +85,6 @@ async def _verify_callback_signature(verify_config: Dict[str, Any], ctx: Dict[st
         return False
 
 
-async def _dispatch_to_downstream(trace_id: str, udm: Dict[str, Any], downstream_config: Dict[str, Any]) -> tuple[
-    int, Any]:
-    """分发回调到下游"""
-    # 获取适配器配置
-    adapter = get_adapter_config(downstream_config, "outbound_callback", "event")
-    if not adapter:
-        logging.warning(f"No outbound_callback adapter for downstream {downstream_config['id']}")
-        return 200, {"msg": "no_adapter"}
-
-    # 准备上下文
-    ctx = {"udm": udm}
-    secrets = downstream_config.get("secrets", {})
-    helpers = {}
-
-    # 渲染URL
-    url = adapter["url"]
-    if "macros" in adapter:
-        url = render_template(adapter["url"], adapter["macros"], ctx, secrets, helpers)
-
-    method = adapter.get("method", "GET")
-    headers = adapter.get("headers")
-
-    # 处理请求体
-    body_template = adapter.get("body")
-    body_data = None
-    if body_template:
-        body_data = eval_body_template(body_template, ctx, secrets, helpers)
-
-    # 发送请求
-    timeout_ms = adapter.get("timeout_ms", 5000)
-    retry_config = adapter.get("retry", {})
-    max_retries = retry_config.get("max", 3)
-    backoff_ms = retry_config.get("backoff_ms", 300)
-
-    status, response = await http_send_with_retry(
-        method=method,
-        url=url,
-        headers=headers,
-        body=body_data,
-        timeout_ms=timeout_ms,
-        max_retries=max_retries,
-        backoff_ms=backoff_ms
-    )
-
-    # 记录分发日志（已取消分发表，统一由 request_log.downstream_url 记录）
-    try:
-        pass
-    except Exception:
-        pass
-
-    return status, response
 
 
 @router.get("/cb", response_model=APIResponse)
@@ -149,7 +93,6 @@ async def handle_upstream_callback(request: Request):
     处理上游回调（仅GET），通过 rid 关联原始模板
     """
     trace_id = str(uuid.uuid4())
-    day = _today()
 
     # 读取 rid
     rid = request.query_params.get("rid")
@@ -305,7 +248,10 @@ async def handle_upstream_callback(request: Request):
                         obj = res.scalar_one_or_none()
                         if obj:
                             obj.is_callback_sent = 1
-                            obj.callback_time = int(time.time()*1000)
+                            # 格式化时间（上海时区）
+                            from datetime import datetime, timezone, timedelta
+                            shanghai_tz = timezone(timedelta(hours=8))
+                            obj.callback_time = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
                             await session.commit()
                         else:
                             logging.warning(f"RequestLog not found to set callback_sent, rid={rid}")
