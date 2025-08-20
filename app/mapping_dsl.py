@@ -65,6 +65,19 @@ def _apply_function(val: Any, fn: str) -> Any:
         except Exception:
             pass
         return val
+    elif fn == "floor()":
+        # 向下取整：提取数字（含小数），转为整数；无法解析则返回默认 14
+        try:
+            if val is None:
+                return "14"
+            s = str(val).strip()
+            m = re.search(r"\d+(?:\.\d+)?", s)
+            if not m:
+                return "14"
+            num = float(m.group(0))
+            return str(int(num))
+        except Exception:
+            return "14"
 
     return val
 
