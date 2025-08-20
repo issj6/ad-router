@@ -42,7 +42,8 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
         "user": body.user or {},
         "net": {
             "ip": body.ip or (request.client.host if request.client else ""),
-            "ua": body.ua or request.headers.get("user-agent", "")
+            # 取消兜底：不再从请求头取 UA；下游传空则为空，未传则为空
+            "ua": body.ua or ""
         },
         "time": {
             "ts": body.ts or now
