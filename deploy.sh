@@ -19,7 +19,7 @@ if ! docker compose version &> /dev/null; then
 fi
 
 # 检查必要文件
-required_files=("config.yaml" "requirements.txt")
+required_files=("config.yaml" "config_notnull.yaml" "requirements.txt")
 for file in "${required_files[@]}"; do
     if [ ! -f "$file" ]; then
         echo "❌ 缺少必要文件: $file"
@@ -29,6 +29,28 @@ done
 
 # 创建日志目录
 mkdir -p logs
+
+# 检查 MySQL 连接配置
+echo "🔍 检查 MySQL 连接配置..."
+MYSQL_HOST=${MYSQL_HOST:-"127.0.0.1"}
+MYSQL_PORT=${MYSQL_PORT:-"3306"}
+MYSQL_USER=${MYSQL_USER:-"root"}
+MYSQL_PASSWORD=${MYSQL_PASSWORD:-"123456"}
+MYSQL_DB=${MYSQL_DB:-"ad_router"}
+
+echo "MySQL 配置："
+echo "  主机: $MYSQL_HOST"
+echo "  端口: $MYSQL_PORT"
+echo "  用户: $MYSQL_USER"
+echo "  数据库: $MYSQL_DB"
+echo ""
+echo "⚠️  请确保 MySQL 服务已启动且数据库 '$MYSQL_DB' 已创建"
+read -p "是否继续部署？(y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "❌ 部署已取消"
+    exit 1
+fi
 
 # 停止并删除旧容器（如果存在）
 echo "🛑 停止旧容器..."
@@ -84,7 +106,7 @@ echo ""
 echo "📋 服务信息："
 echo "  - 应用地址: http://localhost:6789"
 echo "  - 健康检查: http://localhost:6789/health"
-echo "  - MySQL 端口: 3306"
+echo "  - MySQL 连接: $MYSQL_HOST:$MYSQL_PORT"
 echo ""
 echo "📝 常用命令："
 echo "  - 查看日志: docker compose logs -f adrouter"
