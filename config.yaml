@@ -54,7 +54,7 @@ upstreams:
             "udm.event.name": "query.event_type"                  # 事件类型：ACTIVATED/REGISTERED/PAID/RETAINED
             "udm.meta.amount": "query.amount"                # 付费金额（仅付费事件）
             "udm.meta.days": "query.days"                    # 留存天数（仅留存事件）
-            "udm.time.ts": "udm.time.ts"                       # 使用当前时间戳
+            "udm.time.ts": "now_ms()"                         # 使用当前时间戳
 
 
   - id: "duokaiyou"

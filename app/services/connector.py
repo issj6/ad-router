@@ -92,7 +92,7 @@ async def http_send(method: str, url: str, headers: Optional[Dict[str, str]] = N
         try:
             response_data = response.json()
         except Exception:
-            # 如果不是JSON，返回文本
+            # 如果响应不是JSON格式，返回原始文本（这是正常情况，不需要记录错误）
             response_data = response.text
 
         return response.status_code, response_data

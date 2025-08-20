@@ -58,25 +58,17 @@ class APIResponse(BaseModel):
     message: str = Field(..., description="描述信息")
 
 class HealthResponse(BaseModel):
-    ok: bool
-    timestamp: int
-    version: str
-    db_ok: bool | None = None
-
-    model_config = ConfigDict(json_schema_extra={
-        "example": {"ok": True, "timestamp": 1734508800, "version": "1.0.0", "db_ok": True}
-    })
-
-class HealthResponse(BaseModel):
     """健康检查响应模型"""
     ok: bool = Field(..., description="服务是否正常")
-    timestamp: Optional[int] = Field(None, description="当前时间戳")
-    version: Optional[str] = Field(None, description="服务版本")
+    timestamp: int = Field(..., description="当前时间戳")
+    version: str = Field(..., description="服务版本")
+    db_ok: Optional[bool] = Field(None, description="数据库连接状态")
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "ok": True,
             "timestamp": 1734508800,
-            "version": "1.0.0"
+            "version": "1.0.0",
+            "db_ok": True
         }
     })

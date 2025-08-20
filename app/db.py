@@ -9,12 +9,19 @@ Base = declarative_base()
 _engine: Optional[AsyncEngine] = None
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
-# 默认使用你提供的连接信息；也支持通过环境变量覆盖
-MYSQL_HOST = os.getenv("MYSQL_HOST", "222.186.41.7")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3316"))
-MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "Yyy443556.0")
-MYSQL_DB = os.getenv("MYSQL_DB", "ad_router")
+# 从环境变量获取数据库配置，确保安全性
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_USER = os.getenv("MYSQL_USER")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+MYSQL_DB = os.getenv("MYSQL_DB")
+
+# 验证必需的环境变量
+if not all([MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB]):
+    raise ValueError(
+        "Missing required database environment variables. "
+        "Please set: MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DB"
+    )
 
 async def _prepare_engine() -> AsyncEngine:
     """创建全局 MySQL 异步引擎（aiomysql）"""

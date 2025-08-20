@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import time
 import re
+import logging
 from typing import Any, Dict, Union
 
 def _get_path(ctx: Dict[str, Any], path: str) -> Any:
@@ -66,23 +67,23 @@ def _apply_function(val: Any, fn: str) -> Any:
             pass
         return val
     elif fn == "floor()":
-        # 向下取整：仅当值是“纯数字字符串（可含小数）”或数值类型时生效；否则返回默认 "14"
+        # 向下取整：仅当值是"纯数字字符串（可含小数）"或数值类型时生效；否则返回空字符串
         # 合法示例："13", "13.7", 13, 13.7
         # 非法示例："ABC123", "v13.1", "13.1beta"
         try:
             if val is None:
-                return "14"
+                return ""
             # 数值类型直接处理
             if isinstance(val, (int, float)):
                 return str(int(float(val)))
             # 字符串：必须为整串纯数字/小数
             s = str(val).strip()
             if not re.fullmatch(r"\d+(?:\.\d+)?", s):
-                return "14"
+                return ""
             num = float(s)
             return str(int(num))
         except Exception:
-            return "14"
+            return ""
 
     return val
 
@@ -195,6 +196,10 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
     if expr.startswith("cb_url("):
         return helpers.get("cb_url", lambda: "")()
     
+    # 当前时间戳助手（毫秒）
+    if expr.startswith("now_ms("):
+        return int(time.time() * 1000)
+    
     # 路径访问
     if "." in expr:
         return _get_path(ctx, expr)
@@ -214,7 +219,8 @@ def render_template(url_tmpl: str, macros: Dict[str, str], ctx: Dict[str, Any], 
     for name, expr in (macros or {}).items():
         try:
             values[name] = eval_expr(expr, ctx, secrets, helpers)
-        except Exception:
+        except Exception as e:
+            logging.debug(f"Failed to evaluate macro '{name}': {e}")
             values[name] = ""
     
     # 替换模板中的占位符

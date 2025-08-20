@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Response
 from typing import Any, Dict
 import uuid
 import time
@@ -88,13 +88,14 @@ async def _verify_callback_signature(verify_config: Dict[str, Any], ctx: Dict[st
 
 
 @router.get("/cb", response_model=APIResponse)
-async def handle_upstream_callback(request: Request):
+async def handle_upstream_callback(request: Request, response: Response):
     trace_id = str(uuid.uuid4())
 
     # 读取 rid
     rid = request.query_params.get("rid")
     if not rid:
-        raise HTTPException(status_code=400, detail="Missing rid")
+        response.status_code = 500
+        return APIResponse(success=False, code=500, message="Missing rid")
 
     # 注意：上游ID/下游ID 可以不从token取，按 inbound 映射后如需写日志可从UDM取；此处保持最小改动
     up_id = ""
@@ -116,8 +117,9 @@ async def handle_upstream_callback(request: Request):
                 try:
                     upload = row.upload_params or {}
                     callback_template = upload.get("callback_template")
-                except Exception:
-                    callback_template = callback_template
+                except Exception as e:
+                    logging.debug(f"Failed to extract callback_template from upload_params: {e}")
+                    callback_template = None
     except Exception as e:
         logging.warning(f"Failed to load request_log by rid: {e}")
 
@@ -127,6 +129,7 @@ async def handle_upstream_callback(request: Request):
     try:
         body_data = await request.json()
     except Exception:
+        # 不是JSON body，这是正常的GET请求情况
         body_data = {}
 
     # 构造上下文
@@ -154,7 +157,8 @@ async def handle_upstream_callback(request: Request):
                 if verify_config:
                     if not await _verify_callback_signature(verify_config, ctx, secrets):
                         logging.warning(f"Callback signature verification failed for upstream {up_id}")
-                        raise HTTPException(status_code=400, detail="Invalid signature")
+                        response.status_code = 500
+                        return APIResponse(success=False, code=500, message="Invalid signature")
                 # 映射
                 field_map = inbound_adapter.get("field_map", {})
                 udm = _map_inbound_fields(field_map, ctx, secrets)
@@ -189,7 +193,8 @@ async def handle_upstream_callback(request: Request):
     def apply_macros(tmpl: str, mapping: Dict[str, str]) -> str:
         def rep(m):
             key = m.group(1).upper()
-            return mapping.get(key, m.group(0))
+            # 未匹配的占位符置空，避免"dirty URL"
+            return mapping.get(key, "")
 
         return re.sub(r"__([A-Za-z0-9_]+)__", rep, tmpl)
 
@@ -262,7 +267,7 @@ async def handle_upstream_callback(request: Request):
         if downstream_status == 200:
             return APIResponse(success=True, code=200, message="ok")
         else:
-            return APIResponse(success=False, code=downstream_status, message="server_config_error")
+            return APIResponse(success=False, code=500, message="server_config_error")
 
     except Exception as e:
         logging.error(f"Error dispatching to downstream: {e}")

@@ -54,10 +54,11 @@ async def health_check():
         async with await get_session() as session:
             await session.execute(text("SELECT 1"))
         db_ok = True
-    except Exception:
+    except Exception as e:
+        logging.warning(f"Database connectivity check failed: {e}")
         db_ok = False
     return HealthResponse(
-        ok=True,
+        ok=db_ok,  # 整体健康状态取决于数据库连接
         timestamp=int(time.time()),
         version="1.0.0",
         db_ok=db_ok

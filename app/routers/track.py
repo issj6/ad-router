@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from typing import Any, Dict
 import uuid
@@ -92,8 +92,8 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
                 parsed = urlparse(callback_template)
                 if parsed.query:
                     return f"{base}&{parsed.query}"
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Failed to parse callback template: {e}")
         return base
 
     helpers = {"cb_url": cb_url}  # 将回调模板通过token传递到回调环节
@@ -145,8 +145,8 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     # 记录分发日志（已取消分发表，保留 request_log.upstream_url 即可）
     try:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"Error dispatching to upstream for trace_id {trace_id}: {e}")
     # 一次性 INSERT：准备所有字段后写入（若不存在）；若幂等复用，则仅确保 upstream_url 已写入
     try:
         async with await get_session() as session:
@@ -195,7 +195,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
 
 
 @router.get("/v1/track", response_model=APIResponse)
-async def track_event(request: Request,
+async def track_event(request: Request, response: Response,
                      ds_id: str,
                      event_type: str,
                      click_id: str = None,
@@ -228,7 +228,8 @@ async def track_event(request: Request,
     """
     # 验证事件类型
     if event_type not in ["click", "imp"]:
-        raise HTTPException(status_code=400, detail="Invalid event_type")
+        response.status_code = 500
+        return APIResponse(success=False, code=500, message="Invalid event_type")
 
     # 生成链路追踪ID
     trace_id = str(uuid.uuid4())
@@ -265,11 +266,21 @@ async def track_event(request: Request,
         ua=ua,
         device=device or None,
         user=user or None,
-        ext=ext or None,
-        device_os_version=device_os_version
+        ext=ext or None
     )
 
     # 解析并保存下游回调模板（URL编码→解码后保存）
+    callback_template: str | None = None
+    if callback:
+        try:
+            callback_template = urllib.parse.unquote(callback)
+        except Exception as e:
+            logging.debug(f"Failed to decode callback URL, using raw value: {e}")
+            callback_template = callback
+
+    # 构造初始UDM用于路由
+    udm_for_routing = _make_udm(body, request)
+    
     # 幂等预查：如已存在相同 (ds_id,event_type,click_id) 记录，复用其 rid
     rid_existing = None
     try:
@@ -278,9 +289,9 @@ async def track_event(request: Request,
             res = await session.execute(
                 select(RequestLog.rid)
                 .where(
-                    (RequestLog.ds_id == udm["meta"]["downstream_id"]) &
-                    (RequestLog.event_type == udm["event"]["type"]) &
-                    (RequestLog.click_id == udm["click"]["id"])
+                    (RequestLog.ds_id == udm_for_routing["meta"]["downstream_id"]) &
+                    (RequestLog.event_type == udm_for_routing["event"]["type"]) &
+                    (RequestLog.click_id == udm_for_routing["click"]["id"])
                 )
                 .order_by(RequestLog.id.desc())
                 .limit(1)
@@ -288,27 +299,18 @@ async def track_event(request: Request,
             row = res.first()
             if row and row[0]:
                 rid_existing = row[0]
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Failed to check existing rid: {e}")
 
     rid_to_use = rid_existing or trace_id
-
-    callback_template: str | None = None
-    if callback:
-        try:
-            callback_template = urllib.parse.unquote(callback)
-        except Exception:
-            callback_template = callback
-
-
-    # 构造初始UDM用于路由
-    udm_for_routing = _make_udm(body, request)
 
     # 路由选择
     up_id, ds_out = choose_route(udm_for_routing, CONFIG)
 
-    # 构造最终UDM
+    # 构造最终UDM，如果存在幂等复用，添加到meta中
     udm = _make_udm(body, request, up_id, body.ds_id)
+    if rid_existing:
+        udm["meta"]["reuse_rid"] = rid_existing
 
     # 直接一次写入：准备所有需要的字段，等待渲染出上游URL后，一次性保存
     # 注意：此处不再调用 _save_event_log，改为下方一次性 insert
@@ -318,17 +320,17 @@ async def track_event(request: Request,
     #  - 未找到上游：400（not_found）
     #  - 找到上游但转发失败：按下方返回 500
     if not up_id:
-        return APIResponse(success=False, code=400, message="链接已关闭")
+        return APIResponse(success=False, code=500, message="链接已关闭")
 
     # 查找上游配置
     upstream_config = find_upstream_config(up_id, CONFIG)
     if not upstream_config:
-        return APIResponse(success=False, code=400, message="链接已关闭")
+        return APIResponse(success=False, code=500, message="链接已关闭")
 
-    # 分发到上游
+    # 分发到上游，使用正确的rid（可能是复用的或新的）
     try:
         upstream_status, upstream_response = await _dispatch_to_upstream(
-            trace_id, udm, upstream_config, event_type, callback_template
+            rid_to_use, udm, upstream_config, event_type, callback_template
         )
 
         # 200 认为成功；其它按HTTP对齐
