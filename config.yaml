@@ -56,55 +56,10 @@ upstreams:
             "udm.meta.days": "query.days"                    # 留存天数（仅留存事件）
             "udm.time.ts": "udm.time.ts"                       # 使用当前时间戳
 
+
   - id: "duokaiyou"
-    name: "厦门巴掌互动"
-    description: ""
-    adapters:
-      outbound:
-        click: &click_duokaiyou
-          method: "GET"
-          url: "http://adsense-api.duokaiyou.com/v1/monitor/mr?ca_id={{ad_id}}&idfa={{idfa}}&idfa_md5=&caid={{caid}}&caid_md5=&clickid={{click_id}}&ip={{ip}}&os={{os}}&model={{model}}&os_version={{os_version}}&mac={{mac}}&ts={{ts}}&user_agent={{user_agent}}&callback_url={{callback}}&reporting_type={{reporting_type}}"
-          macros:
-            # 必填参数
-            ad_id: "udm.ad.ad_id | url_encode()"
-            os: "udm.device.os | to_lower()"
-            os_version: "udm.device.os_version | floor()"
-            mac: "udm.device.mac | url_encode()"
-            ts: "udm.time.ts"
-            callback: "cb_url() | url_encode()"
-            click_id: "udm.click.id"
-            reporting_type: "udm.event.type"
-            # Android
-            oaid: "udm.device.oaid | url_encode()"
-            imei: "udm.device.imei | url_encode()"
-            android_id: "udm.device.android_id | url_encode()"
-            # iOS
-            idfa: "udm.device.idfa"
-            caid: "udm.device.caid"
-            # 可选
-            ip: "udm.net.ip | url_encode()"
-            user_agent: "udm.net.ua | normalize_encode()"
-            model: "udm.device.model | url_encode()"
-          timeout_ms: 5000
-          retry: { max: 2, backoff_ms: 500 }
-        # 合并：imp 与 event 直接复用 click 模板
-        imp: *click_duokaiyou
-
-      # NotNull平台回调处理配置（无验证）
-      inbound_callback:
-        event:
-          source: "query"  # 回调参数来源于URL查询参数
-          field_map:
-            "udm.event.type": "const:event"                    # 固定为event类型
-            "udm.event.name": "query.event_type"                  # 事件类型：ACTIVATED/REGISTERED/PAID/RETAINED
-            "udm.meta.amount": "query.amount"                # 付费金额（仅付费事件）
-            "udm.meta.days": "query.days"                    # 留存天数（仅留存事件）
-            "udm.time.ts": "udm.time.ts"                       # 使用当前时间戳
-
-
-  - id: "duokaiyou_mr"
-    name: "多开游监测MR"
-    description: "monitor/mr 上报接口"
+    name: "ad-68a58f8ab82a4-向僵尸开炮"
+    description: "ad-68a58f8ab82a4-向僵尸开炮"
     adapters:
       outbound:
         click:
@@ -131,6 +86,7 @@ upstreams:
             reporting_type: "udm.event.type"
           timeout_ms: 3000
           retry: { max: 2, backoff_ms: 500 }
+#      配置回调
       inbound_callback:
         event:
           source: "query"  # 回调参数来源于URL查询参数
@@ -144,7 +100,5 @@ routes:
     rules:
       - equals: "10_60_683572_8"
         upstream: "adapi"
-      - equals: "68468c9ade037"
+      - equals: "68a58f8ab82a4"
         upstream: "duokaiyou"
-      - equals: "68a52ddf845b2"
-        upstream: "duokaiyou_mr"
