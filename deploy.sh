@@ -19,7 +19,7 @@ if ! docker compose version &> /dev/null; then
 fi
 
 # 检查必要文件
-required_files=("config.yaml" "config_notnull.yaml" "requirements.txt")
+required_files=("config.yaml" "requirements.txt")
 for file in "${required_files[@]}"; do
     if [ ! -f "$file" ]; then
         echo "❌ 缺少必要文件: $file"
