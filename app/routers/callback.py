@@ -89,9 +89,6 @@ async def _verify_callback_signature(verify_config: Dict[str, Any], ctx: Dict[st
 
 @router.get("/cb", response_model=APIResponse)
 async def handle_upstream_callback(request: Request):
-    """
-    处理上游回调（仅GET），通过 rid 关联原始模板
-    """
     trace_id = str(uuid.uuid4())
 
     # 读取 rid

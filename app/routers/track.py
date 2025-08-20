@@ -219,7 +219,7 @@ async def track_event(request: Request,
                      callback: str | None = None):
     """
     统一事件上报接口
-    支持的事件类型：click, imp, event
+    支持的事件类型：click, imp
     """
     # 验证事件类型
     if event_type not in ["click", "imp"]:

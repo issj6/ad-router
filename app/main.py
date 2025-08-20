@@ -15,8 +15,8 @@ logging.basicConfig(
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="OCPX Relay System",
-    description="OCPX中转系统 - 统一对接上游和下游的广告追踪中转服务",
+    title="KPK API SERVER",
+    description="",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
