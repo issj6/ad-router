@@ -1,6 +1,6 @@
 from typing import Dict, Any, Tuple, Optional
 
-def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], bool]:
     """
     根据UDM数据和路由配置选择上游和下游
     
@@ -9,11 +9,11 @@ def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[
         config: 全局配置
     
     Returns:
-        (upstream_id, downstream_id) 元组，可能为None
+        (upstream_id, downstream_id, enabled) 元组，enabled表示路由是否启用
     """
     rules = config.get("routes", [])
     if not rules:
-        return None, None
+        return None, None, False
     
     # 提取路由关键字段
     ad_info = udm.get("ad", {})
@@ -29,13 +29,15 @@ def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[
         if match_key == "campaign_id" and campaign_id:
             for r in rule_list:
                 if r.get("equals") == campaign_id:
-                    return r.get("upstream"), r.get("downstream")
+                    enabled = r.get("enabled", True)  # 默认启用
+                    return r.get("upstream"), r.get("downstream"), enabled
         
         # 按ad_id匹配
         elif match_key == "ad_id" and ad_id:
             for r in rule_list:
                 if r.get("equals") == ad_id:
-                    return r.get("upstream"), r.get("downstream")
+                    enabled = r.get("enabled", True)  # 默认启用
+                    return r.get("upstream"), r.get("downstream"), enabled
         
         # 可以扩展更多匹配规则，如：
         # - 按下游ID匹配
@@ -49,9 +51,10 @@ def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[
         first_rule = rules[0]
         fallback_upstream = first_rule.get("fallback_upstream")
         fallback_downstream = first_rule.get("fallback_downstream")
-        return fallback_upstream, fallback_downstream
+        fallback_enabled = first_rule.get("fallback_enabled", True)  # 兜底配置默认启用
+        return fallback_upstream, fallback_downstream, fallback_enabled
     
-    return None, None
+    return None, None, False
 
 def find_upstream_config(upstream_id: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """查找上游配置"""

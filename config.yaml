@@ -100,5 +100,9 @@ routes:
     rules:
       - equals: "10_60_683572_8"
         upstream: "adapi"
+        enabled: true
       - equals: "68a58f8ab82a4"
         upstream: "duokaiyou"
+        enabled: true
+    fallback_upstream: "adapi"  # 兜底使用 adapi
+    fallback_enabled: false  # 兜底配置是否启用

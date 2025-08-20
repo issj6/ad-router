@@ -261,7 +261,12 @@ async def track_event(request: Request, response: Response,
     rid_to_use = trace_id
 
     # 路由选择
-    up_id, ds_out = choose_route(udm_for_routing, CONFIG)
+    up_id, ds_out, enabled = choose_route(udm_for_routing, CONFIG)
+    
+    # 检查路由是否启用
+    if not enabled:
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="链接已关闭")
 
     # 构造最终UDM
     udm = _make_udm(body, request, up_id, body.ds_id)
@@ -271,10 +276,12 @@ async def track_event(request: Request, response: Response,
     pass
 
     # 响应规则变更：
+    #  - 路由被禁用：400（链接已关闭）
     #  - 未找到上游：400（not_found）
     #  - 找到上游但转发失败：按下方返回 500
     if not up_id:
-        return APIResponse(success=False, code=500, message="链接已关闭")
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="链接已关闭")
 
     # 查找上游配置
     upstream_config = find_upstream_config(up_id, CONFIG)
