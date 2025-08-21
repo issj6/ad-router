@@ -22,6 +22,25 @@ from sqlalchemy.exc import IntegrityError
 router = APIRouter()
 
 
+def _is_placeholder(value: str) -> bool:
+    """检查字符串是否为未替换的占位符"""
+    if not value:
+        return False
+    s = value.strip()
+    return s.startswith("__") and s.endswith("__")
+
+
+def _clean_query_placeholders(request: Request) -> Dict[str, Any]:
+    """对请求的 query 参数做占位符清洗：形如 __xxx__ 的字符串置为空串"""
+    cleaned: Dict[str, Any] = {}
+    for key, val in request.query_params.items():
+        if isinstance(val, str) and _is_placeholder(val):
+            cleaned[key] = ""
+        else:
+            cleaned[key] = val
+    return cleaned
+
+
 def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: str = None) -> Dict[str, Any]:
     """构造统一数据模型(UDM)"""
     # 默认使用13位毫秒时间戳
@@ -178,7 +197,7 @@ async def track_event(request: Request, response: Response,
                      event_type: str,
                      ad_id: str = None,
                      channel_id: str = None,
-                     ts: int = None,
+                     ts: str = None,  # 改为字符串，避免422错误
                      ip: str = None,
                      ua: str = None,
                      # 设备信息
@@ -203,43 +222,67 @@ async def track_event(request: Request, response: Response,
     统一事件上报接口
     支持的事件类型：click, imp
     """
+    # 入口统一清洗：将 query 中形如 __xxx__ 的值置为空串
+    cleaned_query = _clean_query_placeholders(request)
+    
+    # 检查必需参数是否为占位符（ds_id, event_type 必须有效）
+    ds_id_val = cleaned_query.get("ds_id", ds_id)
+    if not ds_id_val:  # 清洗后为空说明原来是占位符
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="ds_id包含未替换的占位符，请检查调用方配置")
+    
+    event_type_val = cleaned_query.get("event_type", event_type)
+    if not event_type_val:  # 清洗后为空说明原来是占位符
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="event_type包含未替换的占位符，请检查调用方配置")
+    
     # 验证事件类型
-    if event_type not in ["click", "imp"]:
-        response.status_code = 500
-        return APIResponse(success=False, code=500, message="Invalid event_type")
+    if event_type_val not in ["click", "imp"]:
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="event_type必须为click或imp")
+    
+    # 处理时间戳参数
+    ts_int = None
+    ts_val = cleaned_query.get("ts", ts)
+    if ts_val:
+        try:
+            ts_int = int(ts_val)
+        except ValueError:
+            response.status_code = 400
+            return APIResponse(success=False, code=400, message="时间戳格式错误，必须为数字")
 
     # 生成链路追踪ID
     trace_id = str(uuid.uuid4())
 
     # 组装 device / user / ext
     device = {}
-    if device_os: device["os"] = device_os
-    if device_model: device["model"] = device_model
-    if device_brand: device["brand"] = device_brand
-    if device_idfa: device["idfa"] = device_idfa
-    if device_caid: device["caid"] = device_caid
-    if device_oaid: device["oaid"] = device_oaid
-    if device_imei: device["imei"] = device_imei
-    if device_android_id: device["android_id"] = device_android_id
-    if device_os_version: device["os_version"] = device_os_version
-    if device_mac: device["mac"] = device_mac
+    if cleaned_query.get("device_os"): device["os"] = cleaned_query.get("device_os")
+    if cleaned_query.get("device_model"): device["model"] = cleaned_query.get("device_model")
+    if cleaned_query.get("device_brand"): device["brand"] = cleaned_query.get("device_brand")
+    if cleaned_query.get("device_idfa"): device["idfa"] = cleaned_query.get("device_idfa")
+    if cleaned_query.get("device_caid"): device["caid"] = cleaned_query.get("device_caid")
+    if cleaned_query.get("device_oaid"): device["oaid"] = cleaned_query.get("device_oaid")
+    if cleaned_query.get("device_imei"): device["imei"] = cleaned_query.get("device_imei")
+    if cleaned_query.get("device_android_id"): device["android_id"] = cleaned_query.get("device_android_id")
+    if cleaned_query.get("device_os_version"): device["os_version"] = cleaned_query.get("device_os_version")
+    if cleaned_query.get("device_mac"): device["mac"] = cleaned_query.get("device_mac")
 
     user = {}
-    if user_phone_md5: user["phone_md5"] = user_phone_md5
-    if user_email_sha256: user["email_sha256"] = user_email_sha256
+    if cleaned_query.get("user_phone_md5"): user["phone_md5"] = cleaned_query.get("user_phone_md5")
+    if cleaned_query.get("user_email_sha256"): user["email_sha256"] = cleaned_query.get("user_email_sha256")
 
     ext = {}
-    if ext_custom_id: ext["custom_id"] = ext_custom_id
+    if cleaned_query.get("ext_custom_id"): ext["custom_id"] = cleaned_query.get("ext_custom_id")
 
     # 构造与原POST一致的请求体模型
     body = TrackRequest(
-        ds_id=ds_id,
-        event_type=event_type,
-        ad_id=ad_id,
-        channel_id=channel_id,
-        ts=ts,
-        ip=ip,
-        ua=ua,
+        ds_id=ds_id_val,
+        event_type=event_type_val,
+        ad_id=cleaned_query.get("ad_id", ad_id),
+        channel_id=cleaned_query.get("channel_id", channel_id),
+        ts=ts_int,  # 使用转换后的整数时间戳
+        ip=cleaned_query.get("ip", ip),
+        ua=cleaned_query.get("ua", ua),
         device=device or None,
         user=user or None,
         ext=ext or None
@@ -247,12 +290,13 @@ async def track_event(request: Request, response: Response,
 
     # 解析并保存下游回调模板（URL编码→解码后保存）
     callback_template: str | None = None
-    if callback:
+    callback_val = cleaned_query.get("callback", callback)
+    if callback_val:
         try:
-            callback_template = urllib.parse.unquote(callback)
+            callback_template = urllib.parse.unquote(callback_val)
         except Exception as e:
             logging.debug(f"Failed to decode callback URL, using raw value: {e}")
-            callback_template = callback
+            callback_template = callback_val
 
     # 构造初始UDM用于路由
     udm_for_routing = _make_udm(body, request)

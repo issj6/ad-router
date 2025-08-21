@@ -21,10 +21,10 @@ upstreams:
     description: "微风互动"
     adapters:
       outbound:
-        click:
+        click: &adapi_click_tpl
           method: "GET"
           url: "http://ad.adapi.cn/click?aid={{aid}}&did={{did}}&os={{os}}&ts={{ts}}&callback={{callback}}&oaid={{oaid}}&imei={{imei}}&android_id={{android_id}}&idfa={{idfa}}&caid={{caid}}&ip={{ip}}&ua={{ua}}&model={{model}}&x={{x}}"
-          macros:
+          macros: &adapi_click_macros
             # 必填参数
             aid: "udm.ad.ad_id | url_encode()"
             did: "const:kpk"
@@ -55,8 +55,6 @@ upstreams:
             "udm.meta.amount": "query.amount"                # 付费金额（仅付费事件）
             "udm.meta.days": "query.days"                    # 留存天数（仅留存事件）
             "udm.time.ts": "now_ms()"                         # 使用当前时间戳
-
-
   - id: "duokaiyou"
     name: "ad-68a58f8ab82a4-向僵尸开炮"
     description: "ad-68a58f8ab82a4-向僵尸开炮"
@@ -98,14 +96,18 @@ upstreams:
 routes:
   - match_key: "ad_id"
     rules:
+      - equals: "67576"
+        upstream: "adapi"
+        enabled: true
+        throttle: 0.2
       - equals: "10_60_683572_8"
         upstream: "adapi"
         enabled: true
-        throttle: 0.0  # 不扣量
+        throttle: 0.2
       - equals: "68a58f8ab82a4"
         upstream: "duokaiyou"
-        enabled: false
-        throttle: 0.2  # 扣量20%，即20%的回调会被拦截
-    fallback_upstream: "adapi"  # 兜底使用 adapi
+        enabled: true
+        throttle: 0.2
+    fallback_upstream: ""  # 兜底使用 adapi
     fallback_enabled: false  # 兜底配置是否启用
-    fallback_throttle: 0.1  # 兜底配置扣量10%
+    fallback_throttle: 0.2  # 兜底配置扣量20%
