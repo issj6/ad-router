@@ -18,7 +18,7 @@ settings:
 upstreams:
   - id: "adapi"
     name: "微风互动"
-    description: ""
+    description: "微风互动"
     adapters:
       outbound:
         click:
@@ -104,7 +104,7 @@ routes:
         throttle: 0.0  # 不扣量
       - equals: "68a58f8ab82a4"
         upstream: "duokaiyou"
-        enabled: true
+        enabled: false
         throttle: 0.2  # 扣量20%，即20%的回调会被拦截
     fallback_upstream: "adapi"  # 兜底使用 adapi
     fallback_enabled: false  # 兜底配置是否启用
