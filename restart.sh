@@ -95,3 +95,6 @@ echo "- 查看日志: docker compose logs -f $SERVICE"
 echo "- 重新部署(重建镜像): $0 --build"
 
 
+
+
+
