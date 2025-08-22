@@ -19,6 +19,58 @@ import urllib.parse
 router = APIRouter()
 
 
+def _normalize_event_name(raw_event_name: str) -> str:
+    """
+    归一化事件名称为标准格式
+    支持的标准事件：ACTIVATED, REGISTERED, PAID, RETAINED
+    """
+    if not raw_event_name:
+        return ""
+    
+    # 清洗：转小写，去除空白，替换分隔符为空
+    cleaned = re.sub(r'[-_\s]+', '', str(raw_event_name).strip().lower())
+    
+    # 映射字典
+    event_mapping = {
+        # 激活相关
+        'activated': 'ACTIVATED',
+        'activation': 'ACTIVATED', 
+        'active': 'ACTIVATED',
+        'act': 'ACTIVATED',
+        'install': 'ACTIVATED',
+        'installed': 'ACTIVATED',
+        
+        # 注册相关
+        'register': 'REGISTERED',
+        'registered': 'REGISTERED',
+        'reg': 'REGISTERED',
+        'signup': 'REGISTERED',
+        'signUp': 'REGISTERED',
+        
+        # 付费相关
+        'pay': 'PAID',
+        'paid': 'PAID',
+        'payment': 'PAID',
+        'purchase': 'PAID',
+        'buy': 'PAID',
+        
+        # 留存相关
+        'retained': 'RETAINED',
+        'retention': 'RETAINED',
+        'retain': 'RETAINED'
+    }
+    
+    # 查找匹配
+    normalized = event_mapping.get(cleaned)
+    if normalized:
+        logging.debug(f"Event normalized: {raw_event_name} -> {normalized}")
+        return normalized
+    
+    # 未匹配则保持原值，记录警告
+    logging.warning(f"Unknown event type: {raw_event_name}, keeping original value")
+    return raw_event_name
+
+
 def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets: Dict[str, str]) -> Dict[str, Any]:
     """映射入站字段到UDM"""
     udm = {
@@ -161,6 +213,14 @@ async def handle_upstream_callback(request: Request, response: Response):
                 # 映射
                 field_map = inbound_adapter.get("field_map", {})
                 udm = _map_inbound_fields(field_map, ctx, secrets)
+
+    # 事件名称归一化（在映射完成后，使用前进行）
+    if udm.get("event", {}).get("name"):
+        original_event = udm["event"]["name"]
+        normalized_event = _normalize_event_name(original_event)
+        udm["event"]["name"] = normalized_event
+        # 保存原始事件名用于调试
+        udm.setdefault("meta", {})["original_event_name"] = original_event
 
     # 补充上下文信息
     udm.setdefault("meta", {})
