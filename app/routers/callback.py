@@ -36,9 +36,13 @@ def _normalize_event_name(raw_event_name: str) -> str:
         'activated': 'ACTIVATED',
         'activation': 'ACTIVATED', 
         'active': 'ACTIVATED',
+        'activate': 'ACTIVATED',
         'act': 'ACTIVATED',
         'install': 'ACTIVATED',
         'installed': 'ACTIVATED',
+        'launch': 'ACTIVATED',
+        'start': 'ACTIVATED',
+        'start_app': 'ACTIVATED',
         
         # 注册相关
         'register': 'REGISTERED',
