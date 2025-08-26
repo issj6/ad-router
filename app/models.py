@@ -8,11 +8,11 @@ class RequestLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     rid: Mapped[str] = mapped_column(String(36), unique=True, index=True)  # 回调关联ID（等于trace_id）
-    ds_id: Mapped[str] = mapped_column(String(64), index=True)
-    up_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    ds_id: Mapped[str] = mapped_column(String(64))
+    up_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     event_type: Mapped[str] = mapped_column(String(16))  # click/imp
-    ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True )
 
     ts: Mapped[int] = mapped_column(BigInteger)  # 毫秒
     os: Mapped[str | None] = mapped_column(String(16), nullable=True)
