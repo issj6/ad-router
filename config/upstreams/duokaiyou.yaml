@@ -1,0 +1,39 @@
+id: "duokaiyou"
+name: "多开游"
+description: "ad-68a58f8ab82a4-向僵尸开炮"
+
+adapters:
+  outbound:
+    click:
+      method: "GET"
+      url: "http://adsense-api.duokaiyou.com/v1/monitor/mr?ca_id={{ad_id}}&imei={{imei}}&imei_md5={{imei_md5}}&androidid={{androidid}}&androidid_md5={{androidid_md5}}&oaid={{oaid}}&oaid_md5={{oaid_md5}}&clickid={{click_id}}&ip={{ip}}&os={{os}}&model={{model}}&brand={{brand}}&os_version={{os_version}}&mac={{mac}}&ts={{ts}}&user_agent={{user_agent}}&callback_url={{callback}}&reporting_type={{reporting_type}}"
+      macros:
+        ad_id: "udm.ad.ad_id | url_encode()"
+        imei: "udm.device.imei | url_encode()"
+        imei_md5: "udm.device.imei | hash_md5() | to_upper()"
+        androidid: "udm.device.android_id | url_encode()"
+        androidid_md5: "udm.device.android_id | hash_md5() | to_upper()"
+        oaid: "udm.device.oaid | url_encode()"
+        oaid_md5: "udm.device.oaid | hash_md5() | to_upper()"
+        click_id: "uuid_v4()"
+        ip: "udm.net.ip | url_encode()"
+        os: "udm.device.os | to_lower()"
+        model: "udm.device.model | url_encode()"
+        brand: "udm.device.brand | url_encode()"
+        os_version: "udm.device.os_version | floor()"
+        mac: "udm.device.mac | url_encode()"
+        ts: "udm.time.ts"
+        user_agent: "udm.net.ua | normalize_encode()"
+        callback: "cb_url() | replace('__EVENT__','__EVENT_TYPE__') | url_encode()"
+        reporting_type: "udm.event.type"
+      timeout_ms: 3000
+      retry: { max: 2, backoff_ms: 500 }
+
+  # 配置回调
+  inbound_callback:
+    event:
+      source: "query"  # 回调参数来源于URL查询参数
+      field_map:
+        "udm.event.type": "const:event"                    # 固定为event类型
+        "udm.event.name": "query.event_type"              # 事件类型：activated/reg/pay
+        "udm.time.ts": "now_ms()"                         # 使用当前时间戳
