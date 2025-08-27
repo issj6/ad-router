@@ -3,7 +3,6 @@ from typing import Any, Dict
 import uuid
 import time
 import datetime
-import logging
 
 from ..config import CONFIG
 from ..db import get_session
@@ -12,6 +11,7 @@ from ..schemas import APIResponse
 from ..services.router import find_upstream_config, get_adapter_config, choose_route, should_throttle_callback
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import eval_expr, render_template, eval_body_template
+from ..utils.logger import info, debug, warning, error, perf_info
 from sqlalchemy import select, text
 import re
 import urllib.parse
@@ -67,11 +67,11 @@ def _normalize_event_name(raw_event_name: str) -> str:
     # 查找匹配
     normalized = event_mapping.get(cleaned)
     if normalized:
-        logging.debug(f"Event normalized: {raw_event_name} -> {normalized}")
+        debug(f"Event normalized: {raw_event_name} -> {normalized}")
         return normalized
     
     # 未匹配则保持原值，记录警告
-    logging.warning(f"Unknown event type: {raw_event_name}, keeping original value")
+    warning(f"Unknown event type: {raw_event_name}, keeping original value")
     return raw_event_name
 
 
@@ -105,7 +105,7 @@ def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets:
             current[parts[-1]] = value
 
         except Exception as e:
-            logging.warning(f"Failed to map field {udm_path}: {e}")
+            warning(f"Failed to map field {udm_path}: {e}")
 
     return udm
 
@@ -137,7 +137,7 @@ async def _verify_callback_signature(verify_config: Dict[str, Any], ctx: Dict[st
         return False
 
     except Exception as e:
-        logging.error(f"Signature verification failed: {e}")
+        error(f"Signature verification failed: {e}")
         return False
 
 
@@ -173,10 +173,10 @@ async def handle_upstream_callback(request: Request, response: Response):
                     upload = row.upload_params or {}
                     callback_template = upload.get("callback_template")
                 except Exception as e:
-                    logging.debug(f"Failed to extract callback_template from upload_params: {e}")
+                    debug(f"Failed to extract callback_template from upload_params: {e}")
                     callback_template = None
     except Exception as e:
-        logging.warning(f"Failed to load request_log by rid: {e}")
+        warning(f"Failed to load request_log by rid: {e}")
 
     # 解析请求参数
     query_params = dict(request.query_params)
@@ -211,7 +211,7 @@ async def handle_upstream_callback(request: Request, response: Response):
                 verify_config = inbound_adapter.get("verify")
                 if verify_config:
                     if not await _verify_callback_signature(verify_config, ctx, secrets):
-                        logging.warning(f"Callback signature verification failed for upstream {up_id}")
+                        warning(f"Callback signature verification failed for upstream {up_id}")
                         response.status_code = 500
                         return APIResponse(success=False, code=500, message="Invalid signature")
                 # 映射
@@ -259,7 +259,7 @@ async def handle_upstream_callback(request: Request, response: Response):
             # 获取路由配置和扣量设置
             _, _, route_enabled, throttle_rate = choose_route(routing_udm, CONFIG)
     except Exception as e:
-        logging.warning(f"Failed to get throttle rate for rid {rid}: {e}")
+        warning(f"Failed to get throttle rate for rid {rid}: {e}")
         throttle_rate = 0.0
 
     # 如果token里没有带回调模板，可按需从数据库查（此处先尝试用token里的）
@@ -294,10 +294,10 @@ async def handle_upstream_callback(request: Request, response: Response):
         try:
             final_downstream_url = apply_macros(callback_template, build_macro_map(udm))
         except Exception as e:
-            logging.warning(f"apply_macros failed: {e}")
+            warning(f"apply_macros failed: {e}")
 
     # 自定义日志：打印最终回拨下游URL
-    logging.info(f"[to-downstream] callback url: {final_downstream_url}")
+    perf_info(f"[to-downstream] callback url: {final_downstream_url}")
 
     # 判断是否需要扣量
     should_throttle = should_throttle_callback(rid, throttle_rate)
@@ -315,13 +315,13 @@ async def handle_upstream_callback(request: Request, response: Response):
                 obj.callback_event_type = (udm.get("event") or {}).get("name")
                 await session.commit()
             else:
-                logging.warning(f"RequestLog not found to set downstream_url, rid={rid}")
+                warning(f"RequestLog not found to set downstream_url, rid={rid}")
     except Exception as e:
-        logging.error(f"Failed to update downstream fields: {e}")
+        error(f"Failed to update downstream fields: {e}")
 
     # 如果命中扣量，直接返回200给上游，不转发给下游
     if should_throttle:
-        logging.info(f"[throttle] callback throttled, rid={rid}, throttle_rate={throttle_rate}")
+        info(f"[throttle] callback throttled, rid={rid}, throttle_rate={throttle_rate}")
         
         # 更新数据库状态为扣量状态 (is_callback_sent = 2)
         try:
@@ -336,7 +336,7 @@ async def handle_upstream_callback(request: Request, response: Response):
                     obj.callback_time = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
                     await session.commit()
         except Exception as e:
-            logging.error(f"Failed to update throttle status: {e}")
+            error(f"Failed to update throttle status: {e}")
         
         return APIResponse(success=True, code=200, message="ok")
 
@@ -372,9 +372,9 @@ async def handle_upstream_callback(request: Request, response: Response):
                             obj.callback_time = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
                             await session.commit()
                         else:
-                            logging.warning(f"RequestLog not found to set callback_sent, rid={rid}")
+                            warning(f"RequestLog not found to set callback_sent, rid={rid}")
                 except Exception as e:
-                    logging.error(f"Failed to update callback_sent: {e}")
+                    error(f"Failed to update callback_sent: {e}")
         else:
             # 无模板则视为无回调需求（直接成功）
             downstream_status, downstream_response = 200, {"msg": "no_callback_template"}
@@ -386,5 +386,5 @@ async def handle_upstream_callback(request: Request, response: Response):
             return APIResponse(success=False, code=500, message="server_config_error")
 
     except Exception as e:
-        logging.error(f"Error dispatching to downstream: {e}")
+        error(f"Error dispatching to downstream: {e}")
         return APIResponse(success=False, code=500, message="server_error")

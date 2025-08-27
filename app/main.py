@@ -1,17 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import time
-import logging
 
 from .routers.track import router as track_router
 from .routers.callback import router as callback_router
 from .schemas import HealthResponse
+from .utils.logger import info, warning, error
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 初始化异步日志系统
+from .utils.logger import setup_logger
+setup_logger()
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -55,7 +53,7 @@ async def health_check():
             await session.execute(text("SELECT 1"))
         db_ok = True
     except Exception as e:
-        logging.warning(f"Database connectivity check failed: {e}")
+        warning(f"Database connectivity check failed: {e}")
         db_ok = False
     return HealthResponse(
         ok=db_ok,  # 整体健康状态取决于数据库连接
@@ -67,30 +65,36 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """应用启动事件"""
-    logging.info("OCPX Relay System starting up...")
+    info("OCPX Relay System starting up...")
     
     # 这里可以添加启动时的初始化逻辑
     # 比如：预热数据库连接、加载配置等
     
-    logging.info("OCPX Relay System started successfully")
+    info("OCPX Relay System started successfully")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """应用关闭事件"""
-    logging.info("OCPX Relay System shutting down...")
+    info("OCPX Relay System shutting down...")
     
     # 清理资源
     from .services.connector import cleanup_client
     await cleanup_client()
     
-    logging.info("OCPX Relay System shutdown complete")
+    info("OCPX Relay System shutdown complete")
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+    
+    # 根据环境变量决定是否启用uvicorn日志
+    enable_logging = os.getenv("ENABLE_LOGGING", "false").lower() in ("true", "1", "yes", "on")
+    
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="critical" if not enable_logging else "info",
+        access_log=enable_logging  # 禁用访问日志
     )

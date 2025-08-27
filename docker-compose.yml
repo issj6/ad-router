@@ -15,6 +15,10 @@ services:
       MYSQL_USER: ${MYSQL_USER:-root}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-123456}
       MYSQL_DB: ${MYSQL_DB:-ad_router}
+      
+      # 日志配置 - 默认关闭以获得最佳性能
+      ENABLE_LOGGING: ${ENABLE_LOGGING:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs

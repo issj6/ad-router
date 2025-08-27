@@ -5,7 +5,6 @@ from typing import Any, Dict
 import uuid
 import time
 import datetime
-import logging
 import urllib.parse
 
 from ..config import CONFIG
@@ -16,6 +15,7 @@ from ..services.router import choose_route, find_upstream_config, get_adapter_co
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
+from ..utils.logger import info, debug, warning, error, perf_info
 from sqlalchemy.exc import IntegrityError
 
 
@@ -81,7 +81,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     # 获取适配器配置
     adapter = get_adapter_config(upstream_config, "outbound", event_type)
     if not adapter:
-        logging.warning(f"No outbound adapter for upstream {upstream_config['id']} event {event_type}")
+        warning(f"No outbound adapter for upstream {upstream_config['id']} event {event_type}")
         return 200, {"msg": "no_adapter"}
 
     # 准备上下文
@@ -110,14 +110,14 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
                 if parsed.query:
                     return f"{base}&{parsed.query}"
         except Exception as e:
-            logging.warning(f"Failed to parse callback template: {e}")
+            warning(f"Failed to parse callback template: {e}")
         return base
 
     helpers = {"cb_url": cb_url}  # 将回调模板通过token传递到回调环节
 
     # 渲染URL
     url = render_template(adapter["url"], adapter.get("macros", {}), ctx, secrets, helpers)
-    logging.info(f"[to-upstream] click url: {url}")
+    perf_info(f"[to-upstream] click url: {url}")
 
 
 
@@ -150,7 +150,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
     try:
         pass
     except Exception as e:
-        logging.error(f"Error dispatching to upstream for trace_id {trace_id}: {e}")
+        error(f"Error dispatching to upstream for trace_id {trace_id}: {e}")
     # 一次性 INSERT：准备所有字段后写入，包含 upstream_url
     try:
         async with await get_session() as session:
@@ -184,7 +184,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
             session.add(reqlog)
             await session.commit()
     except Exception as e:
-        logging.error(f"Failed to insert RequestLog: {e}")
+        error(f"Failed to insert RequestLog: {e}")
 
     # 返回状态和响应（供调用方使用）
     return status, response
@@ -295,7 +295,7 @@ async def track_event(request: Request, response: Response,
         try:
             callback_template = urllib.parse.unquote(callback_val)
         except Exception as e:
-            logging.debug(f"Failed to decode callback URL, using raw value: {e}")
+            debug(f"Failed to decode callback URL, using raw value: {e}")
             callback_template = callback_val
 
     # 构造初始UDM用于路由
@@ -346,5 +346,5 @@ async def track_event(request: Request, response: Response,
             return APIResponse(success=False, code=500, message="network_error")
 
     except Exception as e:
-        logging.error(f"Error dispatching to upstream: {e}")
+        error(f"Error dispatching to upstream: {e}")
         return APIResponse(success=False, code=500, message="server_error")

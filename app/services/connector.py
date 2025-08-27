@@ -1,8 +1,8 @@
 import httpx
 import asyncio
 import json
-import logging
 from typing import Dict, Any, Optional, Tuple
+from ..utils.logger import info, warning, error
 
 # 全局HTTP客户端
 _client: Optional[httpx.AsyncClient] = None
@@ -98,13 +98,13 @@ async def http_send(method: str, url: str, headers: Optional[Dict[str, str]] = N
         return response.status_code, response_data
 
     except httpx.TimeoutException:
-        logging.warning(f"HTTP request timeout: {method} {url}")
+        warning(f"HTTP request timeout: {method} {url}")
         return 408, {"error": "timeout"}
     except httpx.ConnectError:
-        logging.warning(f"HTTP connection error: {method} {url}")
+        warning(f"HTTP connection error: {method} {url}")
         return 503, {"error": "connection_failed"}
     except Exception as e:
-        logging.error(f"HTTP request error: {method} {url}, error: {e}")
+        error(f"HTTP request error: {method} {url}, error: {e}")
         return 500, {"error": str(e)}
 
 
@@ -126,7 +126,7 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
     Returns:
         (status_code, response_data) 元组
     """
-    # logging.info("********** 开始请求URL：" + url)
+    # 已替换为 Loguru 异步日志
     last_status, last_response = 500, {"error": "no_attempt"}
 
     for attempt in range(max_retries + 1):
@@ -145,7 +145,7 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
 
         # 等待后重试
         await asyncio.sleep(backoff_ms / 1000.0)
-        logging.info(f"Retrying HTTP request: {method} {url}, attempt {attempt + 2}")
+        info(f"Retrying HTTP request: {method} {url}, attempt {attempt + 2}")
 
     return last_status, last_response
 

@@ -3,9 +3,9 @@ import hashlib
 import hmac
 import time
 import re
-import logging
 import uuid
 from typing import Any, Dict, Union
+from .utils.logger import debug
 
 def _get_path(ctx: Dict[str, Any], path: str) -> Any:
     """从上下文中获取路径值，支持点号分隔的嵌套路径"""
@@ -230,7 +230,7 @@ def render_template(url_tmpl: str, macros: Dict[str, str], ctx: Dict[str, Any], 
         try:
             values[name] = eval_expr(expr, ctx, secrets, helpers)
         except Exception as e:
-            logging.debug(f"Failed to evaluate macro '{name}': {e}")
+            debug(f"Failed to evaluate macro '{name}': {e}")
             values[name] = ""
     
     # 替换模板中的占位符
