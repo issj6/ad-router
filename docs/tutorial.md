@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
 ### 2. 配置修改
 
-编辑 `config.yaml` 文件：
+编辑 `config/main.yaml` 文件：
 
 ```yaml
 settings:
@@ -302,11 +302,11 @@ mysqldump -h $MYSQL_HOST -u $MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DB > backup_$(d
 
 ### Q: 如何添加新的上游？
 
-A: 在 `config.yaml` 的 `upstreams` 部分添加新配置，然后重启服务。
+A: 使用配置管理工具：`python tools/config_manager.py add-upstream ./config new_upstream_id --name "新上游"`
 
 ### Q: 如何修改路由规则？
 
-A: 修改 `config.yaml` 的 `routes` 部分，支持热重载（重启服务生效）。
+A: 修改 `config/main.yaml` 的 `routes` 部分，然后重启服务。
 
 ### Q: 如何查看详细日志？
 

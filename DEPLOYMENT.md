@@ -35,9 +35,10 @@ export MYSQL_DB=ad_router
 
 ### 2. 验证配置文件
 
-确保 `config.yaml` 包含正确的配置：
+确保 `config/main.yaml` 包含正确的配置：
 - 检查 `callback_base` 是否为你的域名
 - 验证 `app_secret` 已更改为随机密钥
+- 确认上游配置文件存在于 `config/upstreams/` 目录
 - 确认所有上游配置正确
 
 ## 🚀 部署步骤
@@ -66,7 +67,7 @@ docker run -d \
   --name adrouter \
   --env-file .env \
   -p 6789:6789 \
-  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $(pwd)/config:/app/config:ro \
   -v $(pwd)/logs:/app/logs \
   adrouter:latest
 ```
@@ -143,4 +144,4 @@ curl -X GET "http://localhost:8000/v1/track?ds_id=test&event_type=click&ad_id=te
 
 ### API报错
 - 查看详细日志，现在包含更多调试信息
-- 检查 config.yaml 配置是否正确
+- 检查 config/main.yaml 配置是否正确

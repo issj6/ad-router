@@ -16,8 +16,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-123456}
       MYSQL_DB: ${MYSQL_DB:-ad_router}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./config_notnull.yaml:/app/config_notnull.yaml:ro
+      - ./config:/app/config:ro
       - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6789/health"]

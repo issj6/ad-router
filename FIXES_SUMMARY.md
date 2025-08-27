@@ -75,7 +75,7 @@ if not re.fullmatch(r"\d+(?:\.\d+)?", s):
 **问题描述**: 配置文件中`"udm.time.ts": "udm.time.ts"`无法获取当前时间戳
 **影响**: 需要时间戳的回调模板无法获取正确值
 **修复方案**: 添加`now_ms()`函数，更新配置使用该函数
-**修复位置**: `app/mapping_dsl.py`, `config.yaml`
+**修复位置**: `app/mapping_dsl.py`, `config/upstreams/*.yaml`
 ```python
 # 新增功能
 # 当前时间戳助手（毫秒）

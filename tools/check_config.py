@@ -2,13 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-在线配置检查脚本
+配置检查脚本
 
 功能：
-- 下载在线配置 https://gitee.com/yang0000111/files/raw/master/ad-router-config.yaml
+- 检查本地多文件配置结构
 - 校验配置结构(settings/upstreams/routes)
 - 按 ad_id=67576 模拟 choose_route 选择结果
-- 输出为什么会出现“链接已关闭”的诊断结论
+- 输出诊断结论
+
+注意：此脚本已更新为支持新的多文件配置架构
 """
 
 import sys
@@ -23,20 +25,22 @@ except Exception as e:
     sys.exit(1)
 
 
-ONLINE_URL = "https://gitee.com/yang0000111/files/raw/master/ad-router-config.yaml"
-
-
-def download_config(url: str) -> Dict[str, Any]:
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        data = yaml.safe_load(resp.text)
-        assert isinstance(data, dict), "配置根节点必须是字典"
-        for key in ("settings", "upstreams", "routes"):
-            assert key in data, f"配置缺少必要字段: {key}"
-        if "downstreams" not in data:
-            data["downstreams"] = []
-        return data
+def load_local_config() -> Dict[str, Any]:
+    """加载本地多文件配置"""
+    try:
+        # 直接导入配置加载器
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from app.config import CONFIG
+        return CONFIG
+    except Exception as e:
+        print(f"❌ 加载本地配置失败: {e}")
+        print("💡 请确保：")
+        print("   1. config/main.yaml 文件存在")
+        print("   2. 所有上游配置文件存在")
+        print("   3. 环境变量配置正确（如需要）")
+        sys.exit(1)
 
 
 def choose_route_like(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], bool, float]:
@@ -79,9 +83,9 @@ def choose_route_like(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Opti
 
 
 def main(ad_id: str = "67576"):
-    print(f"下载在线配置: {ONLINE_URL}")
-    cfg = download_config(ONLINE_URL)
-    print("配置加载成功\n")
+    print("🔍 加载本地多文件配置...")
+    cfg = load_local_config()
+    print("✅ 配置加载成功\n")
 
     # 打印关键段落
     print("routes 段落:")
@@ -126,7 +130,7 @@ def main(ad_id: str = "67576"):
         for p in problems:
             print(f"  - {p}")
     else:
-        print("\n诊断：配置看起来正确，若仍返回400，请检查运行实例是否已拉取最新配置或查看应用日志中的[to-upstream]输出。")
+        print("\n诊断：配置看起来正确，若仍返回400，请查看应用日志中的详细错误信息。")
 
 
 if __name__ == "__main__":
