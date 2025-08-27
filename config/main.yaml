@@ -56,6 +56,11 @@ routes:
         upstream: "duokaiyou"
         enabled: true
         throttle: 0.2
+      
+      - equals: "68ae719ed76c8"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
         
     # 兜底配置：当没有匹配到具体规则时使用
     fallback_upstream: ""  # 空字符串表示无兜底
