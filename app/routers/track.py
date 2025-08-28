@@ -146,6 +146,9 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         backoff_ms=backoff_ms
     )
 
+    # 根据上游响应状态设置发送状态（与接口返回语义保持一致：仅200视为成功）
+    track_status_value = 1 if status == 200 else 2
+
     # 记录分发日志（已取消分发表，保留 request_log.upstream_url 即可）
     try:
         pass
@@ -177,6 +180,7 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
                 upstream_url=url,
                 downstream_url=None,
                 track_time=track_time_formatted,
+                track_status=track_status_value,
                 is_callback_sent=0,
                 callback_time=None,
                 callback_event_type=None,

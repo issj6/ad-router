@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS request_log (
     upstream_url VARCHAR(2048) NULL,
     downstream_url VARCHAR(2048) NULL,
     track_time VARCHAR(32) NULL,
-    is_callback_sent INT DEFAULT 0,  -- 0:未回拨, 1:已回拨, 2:被扣量
+    track_status INT DEFAULT 0,  -- 0:未发送, 1:发送成功, 2:发送失败
+    is_callback_sent INT DEFAULT 0,  -- 0:未回拨, 1:已回拨, 2:被扣量, 3:回拨失败
     callback_time VARCHAR(32) NULL,
     callback_event_type VARCHAR(64) NULL,
     

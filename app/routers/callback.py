@@ -383,8 +383,36 @@ async def handle_upstream_callback(request: Request, response: Response):
         if downstream_status == 200:
             return APIResponse(success=True, code=200, message="ok")
         else:
+            # 已尝试向下游发送但返回非200，标记为回拨失败(3)
+            try:
+                if final_downstream_url:
+                    async with await get_session() as session:
+                        res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
+                        obj = res.scalar_one_or_none()
+                        if obj:
+                            obj.is_callback_sent = 3
+                            from datetime import datetime, timezone, timedelta
+                            shanghai_tz = timezone(timedelta(hours=8))
+                            obj.callback_time = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+                            await session.commit()
+            except Exception as e:
+                error(f"Failed to update callback failure status: {e}")
             return APIResponse(success=False, code=500, message="server_config_error")
 
     except Exception as e:
         error(f"Error dispatching to downstream: {e}")
+        # 出现异常且存在下游URL，视为回拨失败(3)
+        try:
+            if 'final_downstream_url' in locals() and final_downstream_url:
+                async with await get_session() as session:
+                    res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
+                    obj = res.scalar_one_or_none()
+                    if obj:
+                        obj.is_callback_sent = 3
+                        from datetime import datetime, timezone, timedelta
+                        shanghai_tz = timezone(timedelta(hours=8))
+                        obj.callback_time = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+                        await session.commit()
+        except Exception as ex:
+            error(f"Failed to update callback failure status on exception: {ex}")
         return APIResponse(success=False, code=500, message="server_error")
