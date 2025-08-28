@@ -26,8 +26,8 @@ adapters:
         user_agent: "udm.net.ua | normalize_encode()"
         callback: "cb_url() | replace('__EVENT__','__EVENT_TYPE__') | url_encode()"
         reporting_type: "udm.event.type"
-      timeout_ms: 3000
-      retry: { max: 2, backoff_ms: 500 }
+      timeout_ms: 8000
+      retry: { max: 0, backoff_ms: 500 }
 
   # 配置回调
   inbound_callback:

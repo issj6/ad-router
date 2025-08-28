@@ -18,7 +18,7 @@ async def get_client() -> httpx.AsyncClient:
 
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(
-                connect=2.0,  # 连接超时
+                connect=5.0,  # 连接超时
                 read=5.0,  # 读取超时
                 write=5.0,  # 写入超时
                 pool=10.0  # 连接池超时
