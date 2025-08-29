@@ -27,8 +27,8 @@ adapters:
         ua: "udm.net.ua | normalize_encode()"
         model: "udm.device.model | url_encode()"
         x: "udm.meta.ext.custom_id | url_encode()"
-      timeout_ms: 10000
-      retry: {max: 0, backoff_ms: 500}
+      timeout_ms: 8000
+      retry: {max: 2, backoff_ms: 500}
 
   # NotNull平台回调处理配置（无验证）
   inbound_callback:

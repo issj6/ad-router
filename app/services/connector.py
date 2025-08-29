@@ -18,17 +18,17 @@ async def get_client() -> httpx.AsyncClient:
 
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(
-                connect=5.0,  # 连接超时
+                connect=8.0,  # 连接超时
                 read=5.0,  # 读取超时
                 write=5.0,  # 写入超时
                 pool=10.0  # 连接池超时
             ),
             limits=httpx.Limits(
-                max_keepalive_connections=100,  # 最大保持连接数
-                max_connections=200,  # 最大连接数
+                max_keepalive_connections=200,  # 最大保持连接数
+                max_connections=300,  # 最大连接数
                 keepalive_expiry=30.0  # 连接保持时间
             ),
-            follow_redirects=True,
+            follow_redirects=False,
             verify=True  # 验证SSL证书
         )
     return _client
@@ -135,8 +135,12 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
         # 记录最后一次结果
         last_status, last_response = status, response
 
-        # 成功或客户端错误（4xx）不重试
-        if status < 500:
+        # 成功：2xx/3xx 不重试
+        if 200 <= status < 400:
+            break
+
+        # 仅在 408（超时）时允许重试；其余状态码（含 4xx/5xx）不重试
+        if status != 408:
             break
 
         # 最后一次尝试，不再等待
