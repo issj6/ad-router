@@ -8,7 +8,7 @@ from ..config import CONFIG
 from ..db import get_session
 from ..models import RequestLog
 from ..schemas import APIResponse
-from ..services.router import find_upstream_config, get_adapter_config, choose_route, should_throttle_callback
+from ..services.router import find_upstream_config, get_adapter_config, choose_route, should_throttle_callback, find_matching_rule
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import eval_expr, render_template, eval_body_template
 from ..utils.logger import info, debug, warning, error, perf_info
@@ -19,60 +19,62 @@ import urllib.parse
 router = APIRouter()
 
 
-def _normalize_event_name(raw_event_name: str) -> str:
-    """
-    归一化事件名称为标准格式
-    支持的标准事件：ACTIVATED, REGISTERED, PAID, RETAINED
-    """
-    if not raw_event_name:
+def _normalize_event_key(raw: str) -> str:
+    """将事件名做宽松清洗用于匹配：小写、去空白、去 -/_。"""
+    if raw is None:
         return ""
-    
-    # 清洗：转小写，去除空白，替换分隔符为空
-    cleaned = re.sub(r'[-_\s]+', '', str(raw_event_name).strip().lower())
-    
-    # 映射字典
-    event_mapping = {
-        # 激活相关
-        'activated': 'ACTIVATED',
-        'activation': 'ACTIVATED', 
-        'active': 'ACTIVATED',
-        'activate': 'ACTIVATED',
-        'act': 'ACTIVATED',
-        'install': 'ACTIVATED',
-        'installed': 'ACTIVATED',
-        'launch': 'ACTIVATED',
-        'start': 'ACTIVATED',
-        'start_app': 'ACTIVATED',
-        
-        # 注册相关
-        'register': 'REGISTERED',
-        'registered': 'REGISTERED',
-        'reg': 'REGISTERED',
-        'signup': 'REGISTERED',
-        'signUp': 'REGISTERED',
-        
-        # 付费相关
-        'pay': 'PAID',
-        'paid': 'PAID',
-        'payment': 'PAID',
-        'purchase': 'PAID',
-        'buy': 'PAID',
-        
-        # 留存相关
-        'retained': 'RETAINED',
-        'retention': 'RETAINED',
-        'retain': 'RETAINED'
-    }
-    
-    # 查找匹配
-    normalized = event_mapping.get(cleaned)
-    if normalized:
-        debug(f"Event normalized: {raw_event_name} -> {normalized}")
-        return normalized
-    
-    # 未匹配则保持原值，记录警告
-    warning(f"Unknown event type: {raw_event_name}, keeping original value")
-    return raw_event_name
+    return re.sub(r'[-_\s]+', '', str(raw).strip().lower())
+
+# 废弃：不再使用硬编码猜测式归一化；保留占位避免外部引用报错
+def _normalize_event_name(raw_event_name: str) -> str:  # pragma: no cover
+    return str(raw_event_name or "")
+
+def _apply_upstream_event_mapping(udm: Dict[str, Any], inbound_adapter: Dict[str, Any] | None) -> None:
+    """
+    使用上游配置中的 event_name_map 对 udm.event.name 进行显式映射。
+    不返回值，直接修改传入的 udm。
+    """
+    if not inbound_adapter:
+        return
+    event_map = (inbound_adapter or {}).get("event_name_map") or {}
+    if not isinstance(event_map, dict) or not event_map:
+        return
+    try:
+        original = (udm.get("event") or {}).get("name")
+        key = _normalize_event_key(original)
+        norm_map = { _normalize_event_key(k): v for k, v in event_map.items() }
+        mapped = norm_map.get(key)
+        if mapped:
+            udm.setdefault("meta", {})["original_event_name"] = original
+            udm.setdefault("event", {})["name"] = str(mapped)
+    except Exception as e:
+        warning(f"Failed to apply upstream event mapping: {e}")
+
+def _should_callback_and_remap_event(udm: Dict[str, Any], routing_udm: Dict[str, Any], config: Dict[str, Any]) -> tuple[bool, str | None]:
+    """
+    基于链接级 rule 的 callback_events 进行白名单判定与（可选）事件名改写。
+    返回 (should_callback, remapped_event_name)
+    - 若不应回调，返回 (False, None)
+    - 若应回调，且需要改写事件名，则返回 (True, new_name)
+    - 若应回调，但无需改写，返回 (True, None)
+    """
+    rule = find_matching_rule(routing_udm, config)
+    whitelist_map = (rule or {}).get("callback_events") or {}
+    if not isinstance(whitelist_map, dict) or not whitelist_map:
+        return False, None
+
+    current_event = (udm.get("event") or {}).get("name")
+    if current_event is None:
+        return False, None
+
+    # 允许键名宽松匹配；值原样使用（由业务自行控制是否是标准名）
+    normalized_current = _normalize_event_key(current_event)
+    normalized_whitelist = { _normalize_event_key(k): v for k, v in whitelist_map.items() }
+    mapped_value = normalized_whitelist.get(normalized_current)
+    if mapped_value is None:
+        return False, None
+    # 命中白名单：需要改写为 mapped_value（可能与当前同名）
+    return True, str(mapped_value)
 
 
 def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets: Dict[str, str]) -> Dict[str, Any]:
@@ -218,13 +220,9 @@ async def handle_upstream_callback(request: Request, response: Response):
                 field_map = inbound_adapter.get("field_map", {})
                 udm = _map_inbound_fields(field_map, ctx, secrets)
 
-    # 事件名称归一化（在映射完成后，使用前进行）
-    if udm.get("event", {}).get("name"):
-        original_event = udm["event"]["name"]
-        normalized_event = _normalize_event_name(original_event)
-        udm["event"]["name"] = normalized_event
-        # 保存原始事件名用于调试
-        udm.setdefault("meta", {})["original_event_name"] = original_event
+    # 使用上游配置的事件映射（替代旧的硬编码归一化）
+    if inbound_adapter and (udm.get("event", {}).get("name") is not None):
+        _apply_upstream_event_mapping(udm, inbound_adapter)
 
     # 补充上下文信息
     udm.setdefault("meta", {})
@@ -266,6 +264,31 @@ async def handle_upstream_callback(request: Request, response: Response):
     if not callback_template:
         # 简化：不查库，直接走下游配置兜底
         pass
+
+    # 链接级白名单判定与可选事件名改写
+    should_callback, remapped = _should_callback_and_remap_event(udm, routing_udm, CONFIG)
+    if not should_callback:
+        # 未命中白名单：仅保存，不回调
+        try:
+            async with await get_session() as session:
+                res = await session.execute(select(RequestLog).where(RequestLog.rid == rid))
+                obj = res.scalar_one_or_none()
+                if obj:
+                    callback_params = {"query": query_params, "body": body_data}
+                    obj.callback_params = callback_params
+                    obj.downstream_url = None
+                    obj.is_callback_sent = 0
+                    obj.callback_event_type = (udm.get("event") or {}).get("name")
+                    await session.commit()
+                else:
+                    warning(f"RequestLog not found to set callback skip fields, rid={rid}")
+        except Exception as e:
+            error(f"Failed to update downstream fields on whitelist skip: {e}")
+        return APIResponse(success=True, code=200, message="ok")
+
+    # 命中白名单：可选改写事件名
+    if remapped is not None:
+        udm.setdefault("event", {})["name"] = remapped
 
     # 若存在下游模板，则根据UDM做宏替换以得到最终URL
     def build_macro_map(u: Dict[str, Any]) -> Dict[str, str]:

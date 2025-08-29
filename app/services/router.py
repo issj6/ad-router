@@ -62,6 +62,35 @@ def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[
     
     return None, None, False, 0.0
 
+def find_matching_rule(udm: Dict[str, Any], config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    返回与给定 UDM 匹配的具体路由 rule（不含兜底）。
+    逻辑与 choose_route 的匹配过程保持一致，但仅返回命中的 rule 本身。
+    """
+    rules = config.get("routes", [])
+    if not rules:
+        return None
+
+    ad_info = udm.get("ad", {})
+    campaign_id = ad_info.get("campaign_id", "")
+    ad_id = ad_info.get("ad_id", "")
+
+    for route in rules:
+        match_key = route.get("match_key", "")
+        rule_list = route.get("rules", [])
+
+        if match_key == "campaign_id" and campaign_id:
+            for r in rule_list:
+                if r.get("equals") == campaign_id:
+                    return r
+
+        elif match_key == "ad_id" and ad_id:
+            for r in rule_list:
+                if r.get("equals") == ad_id:
+                    return r
+
+    return None
+
 def find_upstream_config(upstream_id: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """查找上游配置"""
     if not upstream_id:

@@ -26,12 +26,20 @@ adapters:
         user_agent: "udm.net.ua | normalize_encode()"
         callback: "cb_url() | replace('__EVENT__','__EVENT_TYPE__') | url_encode()"
         reporting_type: "udm.event.type"
-      timeout_ms: 8000
+      timeout_ms: 10000
       retry: { max: 0, backoff_ms: 500 }
 
   # 配置回调
   inbound_callback:
     event:
+      event_name_map:
+        activate: ACTIVATED
+        reg: REGISTERED
+        pay: PAID
+        paid: PAID
+        retained: RETAINED
+        retention: RETAINED
+        retain: RETAINED
       source: "query"  # 回调参数来源于URL查询参数
       field_map:
         "udm.event.type": "const:event"                    # 固定为event类型
