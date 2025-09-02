@@ -33,6 +33,13 @@ upstream_configs:
     required: true
     enabled: true
 
+  - id: "88cywl"
+    name: "88CYWL"
+    source: "local"
+    path: "upstreams/88cywl.yaml"
+    required: false
+    enabled: true
+
 # 下游配置文件列表（可选）
 downstream_configs: []
 
@@ -70,6 +77,20 @@ routes:
         throttle: 0.2
         callback_events:
           REGISTERED: REGISTERED
+
+      # 88cywl 示例（默认禁用，替换 equals 为你的广告ID后启用）
+      - equals: "YOUR_AD_ID_HERE"
+        upstream: "88cywl"
+        enabled: false
+        throttle: 0.2
+        custom_params:
+          advertiser: "1"
+          fa_id: "119"
+          os: "2"
+          code: "458335356"
+          gid: "10064"
+        callback_events:
+          ACTIVATED: ACTIVATED
         
     # 兜底配置：当没有匹配到具体规则时使用
     fallback_upstream: ""  # 空字符串表示无兜底

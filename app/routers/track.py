@@ -11,7 +11,7 @@ from ..config import CONFIG
 from ..db import get_session
 from ..models import RequestLog
 from ..schemas import TrackRequest, APIResponse
-from ..services.router import choose_route, find_upstream_config, get_adapter_config
+from ..services.router import choose_route, find_upstream_config, get_adapter_config, find_matching_rule
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
@@ -76,7 +76,8 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
 
 
 async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_config: Dict[str, Any],
-                               event_type: str, callback_template: str | None = None) -> tuple[int, Any]:
+                               event_type: str, callback_template: str | None = None,
+                               route_params: Dict[str, Any] | None = None) -> tuple[int, Any]:
     """分发到上游"""
     # 获取适配器配置
     adapter = get_adapter_config(upstream_config, "outbound", event_type)
@@ -94,7 +95,14 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         }
     }
 
-    secrets = upstream_config.get("secrets", {})
+    # 合并 secrets：路由级 custom_params 覆盖上游 secrets
+    base_secrets = upstream_config.get("secrets", {}) or {}
+    secrets = dict(base_secrets)
+    if route_params and isinstance(route_params, dict):
+        try:
+            secrets.update({k: v for k, v in route_params.items()})
+        except Exception:
+            pass
 
     # 准备回调URL助手
     app_secret = CONFIG["settings"]["app_secret"]
@@ -336,10 +344,21 @@ async def track_event(request: Request, response: Response,
     if not upstream_config:
         return APIResponse(success=False, code=500, message="链接已关闭")
 
+    # 提取路由级 custom_params（如存在）
+    route_params: Dict[str, Any] = {}
+    try:
+        matched_rule = find_matching_rule(udm_for_routing, CONFIG)
+        if isinstance(matched_rule, dict):
+            rp = matched_rule.get("custom_params")
+            if isinstance(rp, dict):
+                route_params = rp
+    except Exception as e:
+        debug(f"failed to load route custom_params: {e}")
+
     # 分发到上游，使用正确的rid（可能是复用的或新的）
     try:
         upstream_status, upstream_response = await _dispatch_to_upstream(
-            rid_to_use, udm, upstream_config, event_type, callback_template
+            rid_to_use, udm, upstream_config, event_type, callback_template, route_params
         )
 
         # 200 认为成功；其它按HTTP对齐

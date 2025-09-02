@@ -59,22 +59,34 @@ def _should_callback_and_remap_event(udm: Dict[str, Any], routing_udm: Dict[str,
     - 若应回调，但无需改写，返回 (True, None)
     """
     rule = find_matching_rule(routing_udm, config)
-    whitelist_map = (rule or {}).get("callback_events") or {}
-    if not isinstance(whitelist_map, dict) or not whitelist_map:
+    whitelist = (rule or {}).get("callback_events")
+    if not whitelist:
         return False, None
 
     current_event = (udm.get("event") or {}).get("name")
     if current_event is None:
         return False, None
 
-    # 允许键名宽松匹配；值原样使用（由业务自行控制是否是标准名）
+    # 支持两种形态：
+    # 1) dict: {src_event: dst_event} → 命中且可改名
+    # 2) list/tuple/set: [eventA, eventB] → 仅白名单，不改名
     normalized_current = _normalize_event_key(current_event)
-    normalized_whitelist = { _normalize_event_key(k): v for k, v in whitelist_map.items() }
-    mapped_value = normalized_whitelist.get(normalized_current)
-    if mapped_value is None:
+
+    if isinstance(whitelist, dict):
+        normalized_map = { _normalize_event_key(k): v for k, v in whitelist.items() }
+        mapped_value = normalized_map.get(normalized_current)
+        if mapped_value is None:
+            return False, None
+        return True, str(mapped_value)
+
+    if isinstance(whitelist, (list, tuple, set)):
+        normalized_set = { _normalize_event_key(x) for x in whitelist }
+        if normalized_current in normalized_set:
+            return True, None  # 不改名
         return False, None
-    # 命中白名单：需要改写为 mapped_value（可能与当前同名）
-    return True, str(mapped_value)
+
+    # 其他类型：不支持
+    return False, None
 
 
 def _map_inbound_fields(field_map: Dict[str, str], ctx: Dict[str, Any], secrets: Dict[str, str]) -> Dict[str, Any]:
@@ -277,7 +289,7 @@ async def handle_upstream_callback(request: Request, response: Response):
                     callback_params = {"query": query_params, "body": body_data}
                     obj.callback_params = callback_params
                     obj.downstream_url = None
-                    obj.is_callback_sent = 0
+                    obj.is_callback_sent = 4  # 未命中白名单，明确区分于历史默认值0
                     obj.callback_event_type = (udm.get("event") or {}).get("name")
                     await session.commit()
                 else:
