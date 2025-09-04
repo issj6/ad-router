@@ -6,6 +6,9 @@ services:
     build: .
     container_name: adrouter-app
     restart: unless-stopped
+    networks:
+      - adrouter_net
+      - external_redis_net
     ports:
       - "6789:6789"
     environment:
@@ -27,3 +30,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+networks:
+  adrouter_net:
+    external: true
+    name: adrouter_net

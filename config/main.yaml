@@ -7,7 +7,7 @@ settings:
   timezone: "Asia/Shanghai"
   app_secret: "notnull_callback_secret_2024"
   redis:
-    host: "103.36.221.200"
+    host: "my-redis"
     port: 6379
     password: "Yyy443556.0"
     db: 0
