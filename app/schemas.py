@@ -62,6 +62,7 @@ class HealthResponse(BaseModel):
     version: str = Field(..., description="服务版本")
     db_ok: Optional[bool] = Field(None, description="数据库连接状态")
     debounce_ok: Optional[bool] = Field(None, description="去抖管理器运行状态")
+    redis_ok: Optional[bool] = Field(None, description="Redis 连接状态")
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
@@ -69,6 +70,7 @@ class HealthResponse(BaseModel):
             "timestamp": 1734508800,
             "version": "1.0.0",
             "db_ok": True,
-            "debounce_ok": True
+            "debounce_ok": True,
+            "redis_ok": True
         }
     })

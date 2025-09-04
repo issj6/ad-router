@@ -47,6 +47,7 @@ async def health_check():
     """健康检查接口：附带数据库连通性检查"""
     db_ok = False
     debounce_ok = False
+    redis_ok = False
     try:
         from .db import get_session
         from sqlalchemy import text
@@ -61,17 +62,27 @@ async def health_check():
     try:
         from .services.debounce_redis import get_manager
         mgr = get_manager()
-        # 认为 worker_task 存在且运行中即为 OK
         debounce_ok = getattr(mgr, "_running", False) is True
+        # Redis ping
+        try:
+            client = getattr(mgr, "_redis", None)
+            if client is not None:
+                pong = await client.ping()
+                redis_ok = bool(pong)
+        except Exception as re:
+            warning(f"Redis ping failed: {re}")
+            redis_ok = False
     except Exception as e:
         warning(f"Debounce manager health check failed: {e}")
         debounce_ok = False
+        redis_ok = False
     return HealthResponse(
         ok=db_ok,  # 整体健康状态取决于数据库连接
         timestamp=int(time.time()),
         version="1.0.0",
         db_ok=db_ok,
-        debounce_ok=debounce_ok
+        debounce_ok=debounce_ok,
+        redis_ok=redis_ok
     )
 
 @app.on_event("startup")
