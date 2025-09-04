@@ -42,6 +42,84 @@ class RedisDebounceManager:
         self._worker_task = None
         info("Redis Debounce manager stopped")
 
+    async def flush_all(self, force: bool = False, max_items: int = 1000) -> int:
+        """尝试立即发送所有已到期(或强制)的任务，返回处理数量。
+
+        - force=False: 仅处理 due_at_ms <= now 的任务（不影响并发，仅短时批量消费）
+        - force=True: 直接把所有待处理任务的 due 提前到 now 并尝试发送（用于关停前兜底）
+
+        说明：为避免影响并发性能，采用有限批量 + 短事务；不与 worker 抢占同一任务（仍使用相同锁）。
+        """
+        processed = 0
+        now_ms = int(time.time() * 1000)
+        try:
+            if force:
+                # 将所有待处理条目的score设置为now，避免漏发
+                try:
+                    # 取出前 max_items 个成员并统一设置为 now_ms
+                    members = await self._redis.zrange(self._due_key, 0, max_items - 1)
+                    if members:
+                        mapping = {m: now_ms for m in members}
+                        await self._redis.zadd(self._due_key, mapping)
+                except Exception as e:
+                    warning(f"flush_all force zadd failed: {e}")
+
+            # 逐批弹出并处理
+            while processed < max_items:
+                try:
+                    popped = await self._redis.zpopmin(self._due_key, count=min(self._batch, max_items - processed))
+                except Exception as e:
+                    warning(f"flush_all zpopmin error: {e}")
+                    break
+
+                if not popped:
+                    break
+
+                for member, score in popped:
+                    try:
+                        task_key = member if isinstance(member, str) else member.decode('utf-8', errors='ignore')
+                        lock_key = f"{self._prefix}lock:{task_key}"
+                        got = False
+                        try:
+                            got = await self._redis.set(lock_key, "1", nx=True, px=self._lock_ttl_ms)
+                        except Exception as e:
+                            warning(f"flush_all lock error: {e}")
+                        if not got:
+                            continue
+
+                        latest_key = f"{self._prefix}latest:{task_key}"
+                        data = await self._redis.hgetall(latest_key)
+                        if not data:
+                            await self._redis.delete(lock_key)
+                            continue
+
+                        job_json = data.get("job_json")
+                        if not job_json:
+                            await self._redis.delete(lock_key)
+                            continue
+                        try:
+                            job = json.loads(job_json)
+                        except Exception as e:
+                            warning(f"flush_all job_json parse error: {e}")
+                            await self._redis.delete(lock_key)
+                            continue
+
+                        try:
+                            await dispatch_click_job(job)
+                        except Exception as e:
+                            error(f"flush_all dispatch failed: {e}")
+                        finally:
+                            try:
+                                await self._redis.delete(latest_key)
+                            finally:
+                                await self._redis.delete(lock_key)
+                        processed += 1
+                    except Exception as loop_err:
+                        warning(f"flush_all loop item error: {loop_err}")
+        except Exception as e:
+            error(f"flush_all crashed: {e}")
+        return processed
+
     async def submit_job(self, key: str, order_ts_ms: int, inactivity_ms: int, max_wait_ms: int,
                          job: Dict[str, Any]) -> None:
         latest_key = f"{self._prefix}latest:{key}"

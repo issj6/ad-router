@@ -383,7 +383,10 @@ async def track_event(request: Request, response: Response,
         # 仅转发最后一条：提交到去抖管理器，由后台定时发送
         inactivity_ms = int(debounce_cfg.get("inactivity_ms", 3000))
         max_wait_ms = int(debounce_cfg.get("max_wait_ms", 6000))
-        order_ts_ms = int(udm.get("time", {}).get("ts") or int(time.time() * 1000))
+        # 使用服务端时间保证排序单调，避免客户端乱序覆盖
+        _client_ts = int(udm.get("time", {}).get("ts") or 0)
+        _now_ts = int(time.time() * 1000)
+        order_ts_ms = _client_ts if _client_ts > _now_ts else _now_ts
         device_key = _build_device_key(udm)
         debounce_key = f"{up_id}:{udm.get('ad', {}).get('ad_id', '')}:{device_key}"
 
@@ -399,6 +402,12 @@ async def track_event(request: Request, response: Response,
 
         try:
             manager = get_manager()
+            # 守护：若管理器未运行则自动拉起，避免非标准启动导致后台未工作
+            if not getattr(manager, "_running", False):
+                try:
+                    await manager.start()
+                except Exception as _e:
+                    warning(f"Debounce manager auto-start failed: {_e}")
             # Redis 版：走 submit_job；内存版：走 submit
             if hasattr(manager, "submit_job"):
                 await manager.submit_job(

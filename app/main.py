@@ -112,7 +112,14 @@ async def shutdown_event():
     await cleanup_client()
     try:
         from .services.debounce_redis import get_manager
-        await get_manager().shutdown()
+        mgr = get_manager()
+        try:
+            # 关停前尽量冲刷已到期任务，force=True 兜底（有限批量避免压力峰值）
+            processed = await mgr.flush_all(force=True, max_items=1000)
+            info(f"Debounce flush_all processed: {processed}")
+        except Exception as fe:
+            warning(f"Debounce flush_all failed: {fe}")
+        await mgr.shutdown()
     except Exception as e:
         warning(f"Debounce manager failed to shutdown: {e}")
     
