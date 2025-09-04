@@ -75,10 +75,14 @@ routes:
       # 巴掌互动-向僵尸开炮
       - equals: "68a58f8ab82a4"
         upstream: "duokaiyou"
-        enabled: false
+        enabled: true
         throttle: 0.2
         callback_events:
           REGISTERED: REGISTERED
+        debounce:
+          enabled: true
+          inactivity_ms: 6000
+          max_wait_ms: 20000
       
       - equals: "68ae719ed76c8"
         upstream: "duokaiyou"
