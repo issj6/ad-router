@@ -61,12 +61,14 @@ class HealthResponse(BaseModel):
     timestamp: int = Field(..., description="当前时间戳")
     version: str = Field(..., description="服务版本")
     db_ok: Optional[bool] = Field(None, description="数据库连接状态")
+    debounce_ok: Optional[bool] = Field(None, description="去抖管理器运行状态")
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "ok": True,
             "timestamp": 1734508800,
             "version": "1.0.0",
-            "db_ok": True
+            "db_ok": True,
+            "debounce_ok": True
         }
     })

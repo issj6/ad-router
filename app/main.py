@@ -46,6 +46,7 @@ async def root():
 async def health_check():
     """健康检查接口：附带数据库连通性检查"""
     db_ok = False
+    debounce_ok = False
     try:
         from .db import get_session
         from sqlalchemy import text
@@ -55,11 +56,22 @@ async def health_check():
     except Exception as e:
         warning(f"Database connectivity check failed: {e}")
         db_ok = False
+
+    # 去抖管理器状态检查
+    try:
+        from .services.debounce_redis import get_manager
+        mgr = get_manager()
+        # 认为 worker_task 存在且运行中即为 OK
+        debounce_ok = getattr(mgr, "_running", False) is True
+    except Exception as e:
+        warning(f"Debounce manager health check failed: {e}")
+        debounce_ok = False
     return HealthResponse(
         ok=db_ok,  # 整体健康状态取决于数据库连接
         timestamp=int(time.time()),
         version="1.0.0",
-        db_ok=db_ok
+        db_ok=db_ok,
+        debounce_ok=debounce_ok
     )
 
 @app.on_event("startup")
@@ -70,8 +82,8 @@ async def startup_event():
     # 这里可以添加启动时的初始化逻辑
     # 比如：预热数据库连接、加载配置等
     try:
-        # 启动去抖管理器（内存版）
-        from .services.debounce import get_manager
+        # 启动去抖管理器（Redis版）
+        from .services.debounce_redis import get_manager
         await get_manager().start()
         info("Debounce manager started")
     except Exception as e:
@@ -88,7 +100,7 @@ async def shutdown_event():
     from .services.connector import cleanup_client
     await cleanup_client()
     try:
-        from .services.debounce import get_manager
+        from .services.debounce_redis import get_manager
         await get_manager().shutdown()
     except Exception as e:
         warning(f"Debounce manager failed to shutdown: {e}")

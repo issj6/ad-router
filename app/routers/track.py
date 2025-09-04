@@ -17,7 +17,7 @@ from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
 from ..utils.logger import info, debug, warning, error, perf_info
 from sqlalchemy.exc import IntegrityError
-from ..services.debounce import get_manager
+from ..services.debounce_redis import get_manager
 
 
 router = APIRouter()
@@ -387,26 +387,46 @@ async def track_event(request: Request, response: Response,
         device_key = _build_device_key(udm)
         debounce_key = f"{up_id}:{udm.get('ad', {}).get('ad_id', '')}:{device_key}"
 
-        async def _send_factory():
-            try:
-                await _dispatch_to_upstream(rid_to_use, udm, upstream_config, event_type, callback_template, route_params)
-            except Exception as e:
-                error(f"Debounce send failed: {e}")
+        # 构建可序列化任务，便于 Redis 去抖
+        job = {
+            "trace_id": rid_to_use,
+            "udm": udm,
+            "upstream_id": up_id,
+            "event_type": event_type,
+            "callback_template": callback_template,
+            "route_params": route_params,
+        }
 
         try:
-            await get_manager().submit(
-                key=debounce_key,
-                order_ts_ms=order_ts_ms,
-                inactivity_ms=inactivity_ms,
-                max_wait_ms=max_wait_ms,
-                send_factory=_send_factory,
-            )
+            manager = get_manager()
+            # Redis 版：走 submit_job；内存版：走 submit
+            if hasattr(manager, "submit_job"):
+                await manager.submit_job(
+                    key=debounce_key,
+                    order_ts_ms=order_ts_ms,
+                    inactivity_ms=inactivity_ms,
+                    max_wait_ms=max_wait_ms,
+                    job=job,
+                )
+            else:
+                async def _send_factory():
+                    try:
+                        from ..services.forwarder import dispatch_click_job
+                        await dispatch_click_job(job)
+                    except Exception as e:
+                        error(f"Debounce send failed: {e}")
+                await manager.submit(
+                    key=debounce_key,
+                    order_ts_ms=order_ts_ms,
+                    inactivity_ms=inactivity_ms,
+                    max_wait_ms=max_wait_ms,
+                    send_factory=_send_factory,
+                )
         except Exception as e:
             warning(f"Debounce submit failed, fallback to direct send: {e}")
             try:
-                upstream_status, upstream_response = await _dispatch_to_upstream(
-                    rid_to_use, udm, upstream_config, event_type, callback_template, route_params
-                )
+                from ..services.forwarder import dispatch_click_job
+                upstream_status, upstream_response = await dispatch_click_job(job)
                 if upstream_status != 200:
                     return APIResponse(success=False, code=500, message="network_error")
             except Exception as ex:

@@ -6,6 +6,11 @@ settings:
   callback_base: "http://ikpk.notnull.cc:6789"
   timezone: "Asia/Shanghai"
   app_secret: "notnull_callback_secret_2024"
+  redis:
+    host: "103.36.221.200"
+    port: 6379
+    password: "Yyy443556.0"
+    db: 0
 #  ingress_aliases:
 #    event_type: [ "reporting_type", "etype", "type" ]
 #    ad_id: [ "ca_id", "aid", "adid" ]
