@@ -17,6 +17,7 @@ from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
 from ..utils.logger import info, debug, warning, error, perf_info
 from sqlalchemy.exc import IntegrityError
+from ..services.debounce import get_manager
 
 
 router = APIRouter()
@@ -74,6 +75,21 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
         }
     }
 
+
+def _build_device_key(udm: Dict[str, Any]) -> str:
+    """根据优先级计算设备唯一键，兜底使用 ip+ua+os。"""
+    device = udm.get("device") or {}
+    net = udm.get("net") or {}
+    for k in ("idfa", "oaid", "imei", "android_id", "caid"):
+        v = device.get(k)
+        if v:
+            return f"{k}:{str(v).strip().lower()}"
+    ip = (net.get("ip") or "").strip().lower()
+    ua = (net.get("ua") or "").strip().lower()
+    os_name = (device.get("os") or "").strip().lower()
+    if ip or ua or os_name:
+        return f"ipuaos:{ip}|{ua}|{os_name}"
+    return "unknown"
 
 async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_config: Dict[str, Any],
                                event_type: str, callback_template: str | None = None,
@@ -355,17 +371,60 @@ async def track_event(request: Request, response: Response,
     except Exception as e:
         debug(f"failed to load route custom_params: {e}")
 
-    # 分发到上游，使用正确的rid（可能是复用的或新的）
+    # 读取路由级去抖配置
+    debounce_cfg = None
+    try:
+        if isinstance(matched_rule, dict):
+            debounce_cfg = matched_rule.get("debounce")
+    except Exception:
+        debounce_cfg = None
+
+    if isinstance(debounce_cfg, dict) and debounce_cfg.get("enabled"):
+        # 仅转发最后一条：提交到去抖管理器，由后台定时发送
+        inactivity_ms = int(debounce_cfg.get("inactivity_ms", 3000))
+        max_wait_ms = int(debounce_cfg.get("max_wait_ms", 6000))
+        order_ts_ms = int(udm.get("time", {}).get("ts") or int(time.time() * 1000))
+        device_key = _build_device_key(udm)
+        debounce_key = f"{up_id}:{udm.get('ad', {}).get('ad_id', '')}:{device_key}"
+
+        async def _send_factory():
+            try:
+                await _dispatch_to_upstream(rid_to_use, udm, upstream_config, event_type, callback_template, route_params)
+            except Exception as e:
+                error(f"Debounce send failed: {e}")
+
+        try:
+            await get_manager().submit(
+                key=debounce_key,
+                order_ts_ms=order_ts_ms,
+                inactivity_ms=inactivity_ms,
+                max_wait_ms=max_wait_ms,
+                send_factory=_send_factory,
+            )
+        except Exception as e:
+            warning(f"Debounce submit failed, fallback to direct send: {e}")
+            try:
+                upstream_status, upstream_response = await _dispatch_to_upstream(
+                    rid_to_use, udm, upstream_config, event_type, callback_template, route_params
+                )
+                if upstream_status != 200:
+                    return APIResponse(success=False, code=500, message="network_error")
+            except Exception as ex:
+                error(f"Fallback direct send failed: {ex}")
+                return APIResponse(success=False, code=500, message="server_error")
+
+        # 去抖模式：接受请求并返回成功，实际发送在后台完成
+        return APIResponse(success=True, code=200, message="ok")
+
+    # 非去抖：同步发送
     try:
         upstream_status, upstream_response = await _dispatch_to_upstream(
             rid_to_use, udm, upstream_config, event_type, callback_template, route_params
         )
 
-        # 200 认为成功；其它按HTTP对齐
         if upstream_status == 200:
             return APIResponse(success=True, code=200, message="ok")
         else:
-            # 非200均视为上游失败，统一返回500
             return APIResponse(success=False, code=500, message="network_error")
 
     except Exception as e:

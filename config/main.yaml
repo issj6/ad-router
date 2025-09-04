@@ -62,6 +62,10 @@ routes:
         throttle: 0.2
         callback_events:
           ACTIVATED: ACTIVATED
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
         
       # 巴掌互动-向僵尸开炮
       - equals: "68a58f8ab82a4"
@@ -78,17 +82,21 @@ routes:
         callback_events:
           REGISTERED: REGISTERED
 
-      # 88cywl - 根据用户提供的点击URL参数
+      # 88cywl - 燕云十六声-安卓
       - equals: "20250903"
         upstream: "88cywl"
         enabled: true
-        throttle: 0.0
+        throttle: 0.2
         custom_params:
           advertiser: "22"
           fa_id: "1248"
           os: "2"
           code: "258199621"
           gid: "10908"
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
         callback_events:
           REGISTERED: REGISTERED
         

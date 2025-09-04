@@ -69,6 +69,13 @@ async def startup_event():
     
     # 这里可以添加启动时的初始化逻辑
     # 比如：预热数据库连接、加载配置等
+    try:
+        # 启动去抖管理器（内存版）
+        from .services.debounce import get_manager
+        await get_manager().start()
+        info("Debounce manager started")
+    except Exception as e:
+        warning(f"Debounce manager failed to start: {e}")
     
     info("OCPX Relay System started successfully")
 
@@ -80,6 +87,11 @@ async def shutdown_event():
     # 清理资源
     from .services.connector import cleanup_client
     await cleanup_client()
+    try:
+        from .services.debounce import get_manager
+        await get_manager().shutdown()
+    except Exception as e:
+        warning(f"Debounce manager failed to shutdown: {e}")
     
     info("OCPX Relay System shutdown complete")
 
