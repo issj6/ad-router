@@ -39,7 +39,7 @@ upstream_configs:
     enabled: true
 
   - id: "88cywl"
-    name: "88CYWL"
+    name: "橙益"
     source: "local"
     path: "upstreams/88cywl.yaml"
     required: true
@@ -102,6 +102,24 @@ routes:
           os: "2"
           code: "258199621"
           gid: "10908"
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
+        callback_events:
+          REGISTERED: REGISTERED
+      
+      # 88cywl - 守塔不能停-IOS
+      - equals: "20250909"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "1"
+          fa_id: "1074"
+          os: "1"
+          code: "651934282"
+          gid: "10801"
         debounce:
           enabled: true
           inactivity_ms: 5000
