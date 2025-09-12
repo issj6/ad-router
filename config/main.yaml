@@ -84,12 +84,25 @@ routes:
           inactivity_ms: 6000
           max_wait_ms: 20000
       
+      # 巴掌互动
       - equals: "68ae719ed76c8"
         upstream: "duokaiyou"
         enabled: false
         throttle: 0.2
         callback_events:
           REGISTERED: REGISTERED
+
+      # 巴掌互动 - 燕云十六声-安卓
+      - equals: "68c287ff94227"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          REGISTERED: ACTIVATED
+        debounce:
+          enabled: true
+          inactivity_ms: 6000
+          max_wait_ms: 20000
 
       # 88cywl - 燕云十六声-安卓
       - equals: "20250903"
