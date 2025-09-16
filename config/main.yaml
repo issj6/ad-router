@@ -103,6 +103,18 @@ routes:
           enabled: true
           inactivity_ms: 6000
           max_wait_ms: 20000
+      
+      # 巴掌互动 - 地下城堡4-安卓
+      - equals: "68c8f9b76af8d"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          REGISTERED: ACTIVATED
+        debounce:
+          enabled: true
+          inactivity_ms: 6000
+          max_wait_ms: 20000
 
       # 88cywl - 燕云十六声-安卓
       - equals: "20250903"
