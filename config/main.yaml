@@ -45,6 +45,13 @@ upstream_configs:
     required: true
     enabled: true
 
+  - id: "yanymobi"
+    name: "研漾 OCPX"
+    source: "local"
+    path: "upstreams/yanymobi.yaml"
+    required: true
+    enabled: true
+
 # 下游配置文件列表（可选）
 downstream_configs: []
 
