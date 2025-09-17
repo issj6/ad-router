@@ -13,8 +13,8 @@ adapters:
         os: "secret_ref('os') | coalesce('')"
         code: "secret_ref('code') | coalesce('CODE_DEFAULT')"
         gid: "secret_ref('gid') | coalesce('GID_DEFAULT')"
+        aid: "secret_ref('aid') | coalesce('')"
 
-        aid: "udm.ad.ad_id"
         ip: "udm.net.ip | url_encode()"
         idfa: "udm.device.idfa | url_encode()"
         idfamd5: "udm.device.idfa | hash_md5() | to_upper()"

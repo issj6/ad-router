@@ -78,6 +78,8 @@ routes:
           enabled: true
           inactivity_ms: 5000
           max_wait_ms: 15000
+
+####################################################################
         
       # 巴掌互动-向僵尸开炮
       - equals: "68a58f8ab82a4"
@@ -117,14 +119,16 @@ routes:
         enabled: true
         throttle: 0.2
         callback_events:
-          REGISTERED: ACTIVATED
+          ACTIVATED: ACTIVATED
         debounce:
           enabled: true
           inactivity_ms: 6000
           max_wait_ms: 20000
 
+####################################################################
+
       # 88cywl - 燕云十六声-安卓
-      - equals: "20250903"
+      - equals: "258199621"
         upstream: "88cywl"
         enabled: true
         throttle: 0.2
@@ -134,6 +138,7 @@ routes:
           os: "2"
           code: "258199621"
           gid: "10908"
+          aid: "20250903"
         debounce:
           enabled: true
           inactivity_ms: 5000
@@ -142,7 +147,7 @@ routes:
           REGISTERED: REGISTERED
       
       # 88cywl - 守塔不能停-IOS
-      - equals: "20250909"
+      - equals: "651934282"
         upstream: "88cywl"
         enabled: true
         throttle: 0.2
@@ -152,12 +157,70 @@ routes:
           os: "1"
           code: "651934282"
           gid: "10801"
+          aid: "20250909"
         debounce:
           enabled: true
           inactivity_ms: 5000
           max_wait_ms: 15000
         callback_events:
           REGISTERED: REGISTERED
+      
+      # 88cywl - 斗罗大陆猎魂世界-IOS
+      - equals: "673153248"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "1"
+          fa_id: "1249"
+          os: "1"
+          code: "673153248"
+          gid: "10954"
+          aid: "20250917"
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
+        callback_events:
+          ACTIVATED: ACTIVATED
+      
+       # 88cywl - 斗罗大陆猎魂世界-安卓
+      - equals: "258263866"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "22"
+          fa_id: "1294"
+          os: "2"
+          code: "258263866"
+          gid: "10954"
+          aid: "20250917"
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
+        callback_events:
+          REGISTERED: REGISTERED
+      
+      # 88cywl - 仙遇-IOS
+      - equals: "120759013"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "2"
+          fa_id: "1474"
+          os: "1"
+          code: "120759013"
+          gid: "10998"
+          aid: "20250917"
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
+        callback_events:
+          ACTIVATED: ACTIVATED
         
     # 兜底配置：当没有匹配到具体规则时使用
     fallback_upstream: ""  # 空字符串表示无兜底
