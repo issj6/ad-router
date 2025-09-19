@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 卡普卡应用
   adrouter:
@@ -35,3 +33,5 @@ networks:
   adrouter_net:
     external: true
     name: adrouter_net
+  external_redis_net:
+    external: true
