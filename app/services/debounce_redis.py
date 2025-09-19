@@ -16,18 +16,25 @@ class RedisDebounceManager:
       - {prefix}lock:{task_key}    → 短期排他锁，SET NX PX
     """
 
-    def __init__(self, redis_client, key_prefix: str = "debounce:", batch: int = 50) -> None:
+    def __init__(self, redis_client, key_prefix: str = "debounce:", batch: int = 200, concurrency: int = 64, latest_ttl_ms: int = 86400000) -> None:
         self._redis = redis_client
         self._prefix = key_prefix
         self._due_key = f"{self._prefix}due"
-        self._batch = batch
+        self._batch = int(batch)
         self._running = False
         self._worker_task: Optional[asyncio.Task] = None
         self._lock_ttl_ms = 30000
+        # 兜底：latest 键的 TTL，防止异常残留；可通过 settings.debounce.latest_ttl_ms 配置
+        self._latest_ttl_ms = int(latest_ttl_ms)
+        # 发送并发度
+        self._concurrency = int(concurrency)
+        self._sem: Optional[asyncio.Semaphore] = None
 
     async def start(self) -> None:
         self._running = True
         if self._worker_task is None or self._worker_task.done():
+            # 在启动时创建信号量，确保事件循环已就绪
+            self._sem = asyncio.Semaphore(self._concurrency)
             self._worker_task = asyncio.create_task(self._worker_loop())
         info("Redis Debounce manager started")
 
@@ -40,6 +47,7 @@ class RedisDebounceManager:
             except Exception:
                 pass
         self._worker_task = None
+        self._sem = None
         info("Redis Debounce manager stopped")
 
     async def flush_all(self, force: bool = False, max_items: int = 1000) -> int:
@@ -132,7 +140,7 @@ class RedisDebounceManager:
             error(f"flush_all crashed: {e}")
         return processed
 
-    async def submit_job(self, key: str, order_ts_ms: int, inactivity_ms: int, max_wait_ms: int,
+    async def submit_job(self, key: str, order_ts_ms: int, max_wait_ms: int,
                          job: Dict[str, Any]) -> None:
         latest_key = f"{self._prefix}latest:{key}"
         now_ms = int(time.time() * 1000)
@@ -144,10 +152,10 @@ class RedisDebounceManager:
         local due_z = KEYS[2]
         local task_key = ARGV[1]
         local now_ms = tonumber(ARGV[2])
-        local inactivity_ms = tonumber(ARGV[3])
-        local max_wait_ms = tonumber(ARGV[4])
-        local order_ts_ms = tonumber(ARGV[5])
-        local job_json = ARGV[6]
+        local max_wait_ms = tonumber(ARGV[3])
+        local order_ts_ms = tonumber(ARGV[4])
+        local job_json = ARGV[5]
+        local latest_ttl = tonumber(ARGV[6])
 
         local first = redis.call('HGET', latest, 'first_submit_ms')
         if not first then
@@ -161,9 +169,8 @@ class RedisDebounceManager:
             redis.call('HSET', latest, 'job_json', job_json)
         end
 
-        local abs_deadline = tonumber(first) + max_wait_ms
-        local new_due = now_ms + inactivity_ms
-        if new_due > abs_deadline then new_due = abs_deadline end
+        -- 固定窗口：首次提交 + max_wait_ms
+        local new_due = tonumber(first) + max_wait_ms
 
         redis.call('HSET', latest, 'due_at_ms', new_due)
         redis.call('HSET', latest, 'updated_ms', now_ms)
@@ -171,7 +178,7 @@ class RedisDebounceManager:
         redis.call('ZREM', due_z, task_key)
         redis.call('ZADD', due_z, new_due, task_key)
         -- 兜底：给 latest 设置过期时间，防止异常残留
-        redis.call('PEXPIRE', latest, 86400000)
+        redis.call('PEXPIRE', latest, latest_ttl)
         return new_due
         """
 
@@ -183,10 +190,10 @@ class RedisDebounceManager:
                 self._due_key,
                 key,
                 now_ms,
-                int(inactivity_ms),
                 int(max_wait_ms),
                 int(order_ts_ms),
                 job_json,
+                int(self._latest_ttl_ms),
             )
         except Exception as e:
             error(f"Redis debounce submit failed: {e}")
@@ -195,6 +202,71 @@ class RedisDebounceManager:
                 await dispatch_click_job(job)
             except Exception as ex:
                 error(f"Redis debounce fallback send failed: {ex}")
+
+    async def _process_member(self, task_key: str) -> None:
+        if self._sem is None:
+            # 未初始化并发控制，降级为串行
+            self._sem = asyncio.Semaphore(1)
+        async with self._sem:
+            try:
+                now_ms = int(time.time() * 1000)
+                lock_key = f"{self._prefix}lock:{task_key}"
+                got = False
+                try:
+                    got = await self._redis.set(lock_key, "1", nx=True, px=self._lock_ttl_ms)
+                except Exception as e:
+                    warning(f"lock error: {e}")
+                if not got:
+                    return
+
+                latest_key = f"{self._prefix}latest:{task_key}"
+                data = await self._redis.hgetall(latest_key)
+                if not data:
+                    try:
+                        await self._redis.zrem(self._due_key, task_key)
+                    finally:
+                        await self._redis.delete(lock_key)
+                    return
+
+                due_at_ms = int(data.get("due_at_ms", "0"))
+                if due_at_ms > now_ms:
+                    try:
+                        await self._redis.zadd(self._due_key, {task_key: due_at_ms})
+                    finally:
+                        await self._redis.delete(lock_key)
+                    return
+
+                job_json = data.get("job_json")
+                if not job_json:
+                    try:
+                        await self._redis.delete(latest_key)
+                        await self._redis.zrem(self._due_key, task_key)
+                    finally:
+                        await self._redis.delete(lock_key)
+                    return
+                try:
+                    job = json.loads(job_json)
+                except Exception as e:
+                    warning(f"job_json parse error: {e}")
+                    try:
+                        await self._redis.delete(latest_key)
+                        await self._redis.zrem(self._due_key, task_key)
+                    finally:
+                        await self._redis.delete(lock_key)
+                    return
+
+                try:
+                    await dispatch_click_job(job)
+                except Exception as e:
+                    error(f"dispatch_click_job failed: {e}")
+                finally:
+                    try:
+                        await self._redis.delete(latest_key)
+                        await self._redis.zrem(self._due_key, task_key)
+                    finally:
+                        await self._redis.delete(lock_key)
+            except Exception as e:
+                warning(f"_process_member error: {e}")
 
     async def _worker_loop(self) -> None:
         try:
@@ -210,74 +282,21 @@ class RedisDebounceManager:
                     await asyncio.sleep(0.2)
                     continue
 
-                now_ms = int(time.time() * 1000)
-                for member, score in popped:
+                tasks = []
+                for member, _ in popped:
                     try:
                         task_key = member
                         if isinstance(task_key, bytes):
                             task_key = task_key.decode('utf-8', errors='ignore')
-                        due_score = int(score)
-
-                        lock_key = f"{self._prefix}lock:{task_key}"
-                        got = False
-                        try:
-                            got = await self._redis.set(lock_key, "1", nx=True, px=self._lock_ttl_ms)
-                        except Exception as e:
-                            warning(f"lock error: {e}")
-                        if not got:
-                            # 其他实例已处理
-                            continue
-
-                        latest_key = f"{self._prefix}latest:{task_key}"
-                        data = await self._redis.hgetall(latest_key)
-                        if not data:
-                            try:
-                                await self._redis.zrem(self._due_key, task_key)
-                            finally:
-                                await self._redis.delete(lock_key)
-                            continue
-
-                        due_at_ms = int(data.get("due_at_ms", "0"))
-                        if due_at_ms > now_ms:
-                            # 被延期，重新入队
-                            try:
-                                await self._redis.zadd(self._due_key, {task_key: due_at_ms})
-                            finally:
-                                await self._redis.delete(lock_key)
-                            continue
-
-                        job_json = data.get("job_json")
-                        if not job_json:
-                            try:
-                                await self._redis.delete(latest_key)
-                                await self._redis.zrem(self._due_key, task_key)
-                            finally:
-                                await self._redis.delete(lock_key)
-                            continue
-                        try:
-                            job = json.loads(job_json)
-                        except Exception as e:
-                            warning(f"job_json parse error: {e}")
-                            try:
-                                await self._redis.delete(latest_key)
-                                await self._redis.zrem(self._due_key, task_key)
-                            finally:
-                                await self._redis.delete(lock_key)
-                            continue
-
-                        # 执行发送
-                        try:
-                            await dispatch_click_job(job)
-                        except Exception as e:
-                            error(f"dispatch_click_job failed: {e}")
-                        finally:
-                            try:
-                                await self._redis.delete(latest_key)
-                                await self._redis.zrem(self._due_key, task_key)
-                            finally:
-                                await self._redis.delete(lock_key)
+                        tasks.append(asyncio.create_task(self._process_member(task_key)))
                     except Exception as loop_err:
-                        warning(f"debounce loop item error: {loop_err}")
+                        warning(f"debounce loop item schedule error: {loop_err}")
+
+                if tasks:
+                    try:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    except Exception as e:
+                        warning(f"debounce gather error: {e}")
 
                 # 小憩，避免空转
                 await asyncio.sleep(0.05)
@@ -299,6 +318,10 @@ def get_manager() -> RedisDebounceManager:
     from ..config import CONFIG
     settings = CONFIG.get("settings", {})
     redis_conf = settings.get("redis") or {}
+    debounce_settings = settings.get("debounce") or {}
+    latest_ttl_ms = int(debounce_settings.get("latest_ttl_ms", 86400000))
+    batch = int(debounce_settings.get("batch", 200))
+    concurrency = int(debounce_settings.get("concurrency", 64))
     import redis.asyncio as redis
     client = redis.Redis(
         host=redis_conf.get("host"),
@@ -307,7 +330,7 @@ def get_manager() -> RedisDebounceManager:
         db=int(redis_conf.get("db", 0)),
         decode_responses=True,
     )
-    _singleton = RedisDebounceManager(client)
+    _singleton = RedisDebounceManager(client, batch=batch, concurrency=concurrency, latest_ttl_ms=latest_ttl_ms)
     return _singleton
 
 

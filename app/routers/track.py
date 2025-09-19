@@ -371,18 +371,25 @@ async def track_event(request: Request, response: Response,
     except Exception as e:
         debug(f"failed to load route custom_params: {e}")
 
-    # 读取路由级去抖配置
-    debounce_cfg = None
+    # 读取去抖开关：路由级优先生效，支持 True/False；否则回退到全局 settings.debounce.enabled
+    debounce_enabled: bool = False
     try:
+        route_debounce = None
         if isinstance(matched_rule, dict):
-            debounce_cfg = matched_rule.get("debounce")
+            route_debounce = matched_rule.get("debounce")
+        if isinstance(route_debounce, bool):
+            debounce_enabled = route_debounce is True
+        else:
+            debounce_enabled = bool(CONFIG.get("settings", {}).get("debounce", {}).get("enabled", False))
     except Exception:
-        debounce_cfg = None
+        debounce_enabled = False
 
-    if isinstance(debounce_cfg, dict) and debounce_cfg.get("enabled"):
+    if debounce_enabled:
         # 仅转发最后一条：提交到去抖管理器，由后台定时发送
-        inactivity_ms = int(debounce_cfg.get("inactivity_ms", 3000))
-        max_wait_ms = int(debounce_cfg.get("max_wait_ms", 6000))
+        try:
+            max_wait_ms = int(CONFIG.get("settings", {}).get("debounce", {}).get("max_wait_ms", 20000))
+        except Exception:
+            max_wait_ms = 20000
         # 使用服务端时间保证排序单调，避免客户端乱序覆盖
         _client_ts = int(udm.get("time", {}).get("ts") or 0)
         _now_ts = int(time.time() * 1000)
@@ -413,7 +420,6 @@ async def track_event(request: Request, response: Response,
                 await manager.submit_job(
                     key=debounce_key,
                     order_ts_ms=order_ts_ms,
-                    inactivity_ms=inactivity_ms,
                     max_wait_ms=max_wait_ms,
                     job=job,
                 )
@@ -427,7 +433,6 @@ async def track_event(request: Request, response: Response,
                 await manager.submit(
                     key=debounce_key,
                     order_ts_ms=order_ts_ms,
-                    inactivity_ms=inactivity_ms,
                     max_wait_ms=max_wait_ms,
                     send_factory=_send_factory,
                 )

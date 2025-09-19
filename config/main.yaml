@@ -11,6 +11,15 @@ settings:
     port: 6379
     password: "Yyy443556.0"
     db: 0
+  debounce:
+    enabled: true
+    # 固定窗口：首次到达 + max_wait_ms
+    max_wait_ms: 20000
+    # worker 消费参数
+    batch: 200
+    concurrency: 64
+    # latest 键兜底 TTL：3 小时
+    latest_ttl_ms: 10800000
 #  ingress_aliases:
 #    event_type: [ "reporting_type", "etype", "type" ]
 #    ad_id: [ "ca_id", "aid", "adid" ]
@@ -74,10 +83,7 @@ routes:
         throttle: 0.2
         callback_events:
           ACTIVATED: ACTIVATED
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
       
       # 微风互动-地下城堡4
       - equals: "1198"
@@ -86,10 +92,7 @@ routes:
         throttle: 0.2
         callback_events:
           REGISTERED: REGISTERED
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
 
 ####################################################################
         
@@ -100,10 +103,7 @@ routes:
         throttle: 0.2
         callback_events:
           REGISTERED: REGISTERED
-        debounce:
-          enabled: true
-          inactivity_ms: 6000
-          max_wait_ms: 20000
+        debounce: true
       
       # 巴掌互动
       - equals: "68ae719ed76c8"
@@ -120,10 +120,7 @@ routes:
         throttle: 0.2
         callback_events:
           REGISTERED: ACTIVATED
-        debounce:
-          enabled: true
-          inactivity_ms: 6000
-          max_wait_ms: 20000
+        debounce: true
       
       # 巴掌互动 - 地下城堡4-安卓
       - equals: "68c8f9b76af8d"
@@ -132,10 +129,7 @@ routes:
         throttle: 0.2
         callback_events:
           ACTIVATED: ACTIVATED
-        debounce:
-          enabled: true
-          inactivity_ms: 6000
-          max_wait_ms: 20000
+        debounce: true
 
 ####################################################################
 
@@ -151,10 +145,7 @@ routes:
           code: "258199621"
           gid: "10908"
           aid: "20250903"
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
         callback_events:
           REGISTERED: REGISTERED
       
@@ -170,10 +161,7 @@ routes:
           code: "651934282"
           gid: "10801"
           aid: "20250909"
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
         callback_events:
           REGISTERED: REGISTERED
       
@@ -189,10 +177,7 @@ routes:
           code: "673153248"
           gid: "10954"
           aid: "20250917"
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
         callback_events:
           ACTIVATED: ACTIVATED
       
@@ -208,10 +193,7 @@ routes:
           code: "258263866"
           gid: "10954"
           aid: "20250917"
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
         callback_events:
           REGISTERED: REGISTERED
       
@@ -227,10 +209,7 @@ routes:
           code: "120759013"
           gid: "10998"
           aid: "20250917"
-        debounce:
-          enabled: true
-          inactivity_ms: 5000
-          max_wait_ms: 15000
+        debounce: true
         callback_events:
           ACTIVATED: ACTIVATED
         
