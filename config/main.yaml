@@ -78,6 +78,18 @@ routes:
           enabled: true
           inactivity_ms: 5000
           max_wait_ms: 15000
+      
+      # 微风互动-地下城堡4
+      - equals: "1198"
+        upstream: "adapi"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          REGISTERED: REGISTERED
+        debounce:
+          enabled: true
+          inactivity_ms: 5000
+          max_wait_ms: 15000
 
 ####################################################################
         
