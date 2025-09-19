@@ -9,7 +9,7 @@ set -e  # 遇到错误立即退出
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/logs/update.log"
 REMOTE_URL="https://git.yylx.win/https://github.com/issj6/ad-router.git"
-BRANCH="ad"
+BRANCH="master"
 
 # 颜色输出
 RED='\033[0;31m'
