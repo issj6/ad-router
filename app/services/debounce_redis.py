@@ -90,18 +90,29 @@ class RedisDebounceManager:
                         latest_key = f"{self._prefix}latest:{task_key}"
                         data = await self._redis.hgetall(latest_key)
                         if not data:
-                            await self._redis.delete(lock_key)
+                            try:
+                                await self._redis.zrem(self._due_key, task_key)
+                            finally:
+                                await self._redis.delete(lock_key)
                             continue
 
                         job_json = data.get("job_json")
                         if not job_json:
-                            await self._redis.delete(lock_key)
+                            try:
+                                await self._redis.delete(latest_key)
+                                await self._redis.zrem(self._due_key, task_key)
+                            finally:
+                                await self._redis.delete(lock_key)
                             continue
                         try:
                             job = json.loads(job_json)
                         except Exception as e:
                             warning(f"flush_all job_json parse error: {e}")
-                            await self._redis.delete(lock_key)
+                            try:
+                                await self._redis.delete(latest_key)
+                                await self._redis.zrem(self._due_key, task_key)
+                            finally:
+                                await self._redis.delete(lock_key)
                             continue
 
                         try:
@@ -111,6 +122,7 @@ class RedisDebounceManager:
                         finally:
                             try:
                                 await self._redis.delete(latest_key)
+                                await self._redis.zrem(self._due_key, task_key)
                             finally:
                                 await self._redis.delete(lock_key)
                         processed += 1
@@ -155,7 +167,11 @@ class RedisDebounceManager:
 
         redis.call('HSET', latest, 'due_at_ms', new_due)
         redis.call('HSET', latest, 'updated_ms', now_ms)
+        -- 去重：先移除旧成员再写入新的 due
+        redis.call('ZREM', due_z, task_key)
         redis.call('ZADD', due_z, new_due, task_key)
+        -- 兜底：给 latest 设置过期时间，防止异常残留
+        redis.call('PEXPIRE', latest, 86400000)
         return new_due
         """
 
@@ -215,7 +231,10 @@ class RedisDebounceManager:
                         latest_key = f"{self._prefix}latest:{task_key}"
                         data = await self._redis.hgetall(latest_key)
                         if not data:
-                            await self._redis.delete(lock_key)
+                            try:
+                                await self._redis.zrem(self._due_key, task_key)
+                            finally:
+                                await self._redis.delete(lock_key)
                             continue
 
                         due_at_ms = int(data.get("due_at_ms", "0"))
@@ -229,13 +248,21 @@ class RedisDebounceManager:
 
                         job_json = data.get("job_json")
                         if not job_json:
-                            await self._redis.delete(lock_key)
+                            try:
+                                await self._redis.delete(latest_key)
+                                await self._redis.zrem(self._due_key, task_key)
+                            finally:
+                                await self._redis.delete(lock_key)
                             continue
                         try:
                             job = json.loads(job_json)
                         except Exception as e:
                             warning(f"job_json parse error: {e}")
-                            await self._redis.delete(lock_key)
+                            try:
+                                await self._redis.delete(latest_key)
+                                await self._redis.zrem(self._due_key, task_key)
+                            finally:
+                                await self._redis.delete(lock_key)
                             continue
 
                         # 执行发送
@@ -246,6 +273,7 @@ class RedisDebounceManager:
                         finally:
                             try:
                                 await self._redis.delete(latest_key)
+                                await self._redis.zrem(self._due_key, task_key)
                             finally:
                                 await self._redis.delete(lock_key)
                     except Exception as loop_err:

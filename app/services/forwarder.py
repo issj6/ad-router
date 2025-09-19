@@ -1,7 +1,7 @@
 from typing import Any, Dict, Tuple
 from ..config import CONFIG
 from ..utils.logger import warning, error, perf_info
-from ..services.router import get_adapter_config, find_upstream_config
+from ..services.router import get_adapter_config, find_upstream_config, choose_route
 from ..mapping_dsl import render_template, eval_body_template
 from ..services.connector import http_send_with_retry
 from ..db import get_session
@@ -26,6 +26,26 @@ async def dispatch_click_job(job: Dict[str, Any]) -> Tuple[int, Any]:
     event_type: str = job["event_type"]
     callback_template = job.get("callback_template")
     route_params = job.get("route_params") or {}
+
+    # 二次路由校验：若当前配置已禁用或上游已变化，则丢弃任务，防止关闭后历史任务继续发送
+    try:
+        routing_udm = {
+            "ad": (udm.get("ad") or {}),
+            "meta": {
+                "downstream_id": (udm.get("meta") or {}).get("downstream_id")
+            },
+        }
+        current_up_id, _, current_enabled, _ = choose_route(routing_udm, CONFIG)
+        # 规则：禁用直接丢弃；若当前命中上游与入队时不同，也丢弃，避免错发
+        if (not current_enabled) or (current_up_id and current_up_id != upstream_id):
+            warning(
+                f"route_disabled_drop: rid={trace_id}, job_upstream={upstream_id}, "
+                f"current_upstream={current_up_id}, enabled={current_enabled}"
+            )
+            return 200, {"msg": "route_disabled_drop"}
+    except Exception as e:
+        # 校验失败不阻断发送，但记录以便排障
+        warning(f"route recheck failed, continue sending: {e}")
 
     upstream_config = find_upstream_config(upstream_id, CONFIG)
     if not upstream_config:
