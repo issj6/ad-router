@@ -1,25 +1,45 @@
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from typing import Any, Dict
 import uuid
 import time
 import datetime
-import logging
 import urllib.parse
 
 from ..config import CONFIG
 from ..db import get_session
 from ..models import RequestLog
 from ..schemas import TrackRequest, APIResponse
-from ..services.router import choose_route, find_upstream_config, get_adapter_config
+from ..services.router import choose_route, find_upstream_config, get_adapter_config, find_matching_rule
 from ..services.connector import http_send_with_retry
 from ..mapping_dsl import render_template, eval_body_template
 from ..utils.security import generate_callback_token
+from ..utils.logger import info, debug, warning, error, perf_info
 from sqlalchemy.exc import IntegrityError
+from ..services.debounce_redis import get_manager
 
 
 router = APIRouter()
+
+
+def _is_placeholder(value: str) -> bool:
+    """检查字符串是否为未替换的占位符"""
+    if not value:
+        return False
+    s = value.strip()
+    return s.startswith("__") and s.endswith("__")
+
+
+def _clean_query_placeholders(request: Request) -> Dict[str, Any]:
+    """对请求的 query 参数做占位符清洗：形如 __xxx__ 的字符串置为空串"""
+    cleaned: Dict[str, Any] = {}
+    for key, val in request.query_params.items():
+        if isinstance(val, str) and _is_placeholder(val):
+            cleaned[key] = ""
+        else:
+            cleaned[key] = val
+    return cleaned
 
 
 def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: str = None) -> Dict[str, Any]:
@@ -32,7 +52,6 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
             "type": body.event_type
         },
         "click": {
-            "id": body.click_id,
             "source": ds_id or body.ds_id
         },
         "ad": {
@@ -57,13 +76,29 @@ def _make_udm(body: TrackRequest, request: Request, up_id: str = None, ds_id: st
     }
 
 
+def _build_device_key(udm: Dict[str, Any]) -> str:
+    """根据优先级计算设备唯一键，兜底使用 ip+ua+os。"""
+    device = udm.get("device") or {}
+    net = udm.get("net") or {}
+    for k in ("idfa", "oaid", "imei", "android_id", "caid"):
+        v = device.get(k)
+        if v:
+            return f"{k}:{str(v).strip().lower()}"
+    ip = (net.get("ip") or "").strip().lower()
+    ua = (net.get("ua") or "").strip().lower()
+    os_name = (device.get("os") or "").strip().lower()
+    if ip or ua or os_name:
+        return f"ipuaos:{ip}|{ua}|{os_name}"
+    return "unknown"
+
 async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_config: Dict[str, Any],
-                               event_type: str, callback_template: str | None = None) -> tuple[int, Any]:
+                               event_type: str, callback_template: str | None = None,
+                               route_params: Dict[str, Any] | None = None) -> tuple[int, Any]:
     """分发到上游"""
     # 获取适配器配置
     adapter = get_adapter_config(upstream_config, "outbound", event_type)
     if not adapter:
-        logging.warning(f"No outbound adapter for upstream {upstream_config['id']} event {event_type}")
+        warning(f"No outbound adapter for upstream {upstream_config['id']} event {event_type}")
         return 200, {"msg": "no_adapter"}
 
     # 准备上下文
@@ -76,46 +111,39 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         }
     }
 
-    secrets = upstream_config.get("secrets", {})
+    # 合并 secrets：路由级 custom_params 覆盖上游 secrets
+    base_secrets = upstream_config.get("secrets", {}) or {}
+    secrets = dict(base_secrets)
+    if route_params and isinstance(route_params, dict):
+        try:
+            secrets.update({k: v for k, v in route_params.items()})
+        except Exception:
+            pass
 
     # 准备回调URL助手
     app_secret = CONFIG["settings"]["app_secret"]
     callback_base = CONFIG["settings"]["callback_base"].rstrip("/")
 
     def cb_url():
-        # 新规则：若幂等复用存在，则使用复用rid；否则用本次trace_id
-        rid = udm.get("meta", {}).get("reuse_rid") or trace_id
-        base = f"{callback_base}/cb?rid={rid}"
+        # 直接使用当前 trace_id 作为 rid
+        base = f"{callback_base}/cb?rid={trace_id}"
         try:
             if callback_template:
                 from urllib.parse import urlparse
                 parsed = urlparse(callback_template)
                 if parsed.query:
                     return f"{base}&{parsed.query}"
-        except Exception:
-            pass
+        except Exception as e:
+            warning(f"Failed to parse callback template: {e}")
         return base
 
     helpers = {"cb_url": cb_url}  # 将回调模板通过token传递到回调环节
 
     # 渲染URL
     url = render_template(adapter["url"], adapter.get("macros", {}), ctx, secrets, helpers)
-    logging.info(f"[to-upstream] click url: {url}")
+    perf_info(f"[to-upstream] click url: {url}")
 
-    # 将上游最终URL保存（使用ORM以确保JSON/类型适配），并记录失败原因
-    try:
-        async with await get_session() as session:
-            rid_to_use = (udm.get("meta", {}).get("reuse_rid") or trace_id)
-            from sqlalchemy import select
-            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
-            obj = res.scalar_one_or_none()
-            if obj:
-                obj.upstream_url = url
-                await session.commit()
-            else:
-                logging.warning(f"RequestLog not found to set upstream_url, rid={rid_to_use}")
-    except Exception as e:
-        logging.error(f"Failed to update upstream_url: {e}")
+
 
     method = adapter.get("method", "GET")
     headers = adapter.get("headers")
@@ -142,52 +170,49 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
         backoff_ms=backoff_ms
     )
 
+    # 根据上游响应状态设置发送状态（与接口返回语义保持一致：仅200视为成功）
+    track_status_value = 1 if status == 200 else 2
+
     # 记录分发日志（已取消分发表，保留 request_log.upstream_url 即可）
     try:
         pass
-    except Exception:
-        pass
-    # 一次性 INSERT：准备所有字段后写入（若不存在）；若幂等复用，则仅确保 upstream_url 已写入
+    except Exception as e:
+        error(f"Error dispatching to upstream for trace_id {trace_id}: {e}")
+    # 一次性 INSERT：准备所有字段后写入，包含 upstream_url
     try:
         async with await get_session() as session:
-            from sqlalchemy import select
-            res = await session.execute(select(RequestLog).where(RequestLog.rid == rid_to_use))
-            obj = res.scalar_one_or_none()
-            if obj is None:
-                # 生成格式化时间（上海时区）
-                from datetime import datetime, timezone, timedelta
-                shanghai_tz = timezone(timedelta(hours=8))
-                track_time_formatted = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+            # 生成格式化时间（上海时区）
+            from datetime import datetime, timezone, timedelta
+            shanghai_tz = timezone(timedelta(hours=8))
+            track_time_formatted = datetime.now(shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
 
-                reqlog = RequestLog(
-                    rid=rid_to_use,
-                    ds_id=udm["meta"]["downstream_id"],
-                    up_id=udm["meta"]["upstream_id"],
-                    event_type=udm["event"]["type"],
-                    ad_id=udm["ad"].get("ad_id"),
-                    channel_id=udm["ad"].get("channel_id"),
-                    click_id=udm["click"].get("id"),
-                    ts=udm["time"]["ts"],
-                    os=(udm.get("device") or {}).get("os"),
-                    upload_params={
-                        "query": dict(udm),
-                        "callback_template": callback_template,
-                    },
-                    callback_params=None,
-                    upstream_url=url,
-                    downstream_url=None,
-                    track_time=track_time_formatted,
-                    is_callback_sent=0,
-                    callback_time=None,
-                    callback_event_type=None,
-                )
-                session.add(reqlog)
-                await session.commit()
-            else:
-                # 已存在（幂等），上面已写入 upstream_url
-                pass
+            reqlog = RequestLog(
+                rid=trace_id,  # 直接使用新生成的 trace_id，不再有复用逻辑
+                ds_id=udm["meta"]["downstream_id"],
+                up_id=udm["meta"]["upstream_id"],
+                event_type=udm["event"]["type"],
+                ad_id=udm["ad"].get("ad_id"),
+                channel_id=udm["ad"].get("channel_id"),
+
+                ts=udm["time"]["ts"],
+                os=(udm.get("device") or {}).get("os"),
+                upload_params={
+                    "query": dict(udm),
+                    "callback_template": callback_template,
+                },
+                callback_params=None,
+                upstream_url=url,
+                downstream_url=None,
+                track_time=track_time_formatted,
+                track_status=track_status_value,
+                is_callback_sent=0,
+                callback_time=None,
+                callback_event_type=None,
+            )
+            session.add(reqlog)
+            await session.commit()
     except Exception as e:
-        logging.error(f"Failed to insert/update RequestLog: {e}")
+        error(f"Failed to insert RequestLog: {e}")
 
     # 返回状态和响应（供调用方使用）
     return status, response
@@ -195,13 +220,12 @@ async def _dispatch_to_upstream(trace_id: str, udm: Dict[str, Any], upstream_con
 
 
 @router.get("/v1/track", response_model=APIResponse)
-async def track_event(request: Request,
+async def track_event(request: Request, response: Response,
                      ds_id: str,
                      event_type: str,
-                     click_id: str = None,
                      ad_id: str = None,
                      channel_id: str = None,
-                     ts: int = None,
+                     ts: str = None,  # 改为字符串，避免422错误
                      ip: str = None,
                      ua: str = None,
                      # 设备信息
@@ -226,86 +250,95 @@ async def track_event(request: Request,
     统一事件上报接口
     支持的事件类型：click, imp
     """
+    # 入口统一清洗：将 query 中形如 __xxx__ 的值置为空串
+    cleaned_query = _clean_query_placeholders(request)
+    
+    # 检查必需参数是否为占位符（ds_id, event_type 必须有效）
+    ds_id_val = cleaned_query.get("ds_id", ds_id)
+    if not ds_id_val:  # 清洗后为空说明原来是占位符
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="ds_id包含未替换的占位符，请检查调用方配置")
+    
+    event_type_val = cleaned_query.get("event_type", event_type)
+    if not event_type_val:  # 清洗后为空说明原来是占位符
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="event_type包含未替换的占位符，请检查调用方配置")
+    
     # 验证事件类型
-    if event_type not in ["click", "imp"]:
-        raise HTTPException(status_code=400, detail="Invalid event_type")
+    if event_type_val not in ["click", "imp"]:
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="event_type必须为click或imp")
+    
+    # 处理时间戳参数
+    ts_int = None
+    ts_val = cleaned_query.get("ts", ts)
+    if ts_val:
+        try:
+            ts_int = int(ts_val)
+        except ValueError:
+            response.status_code = 400
+            return APIResponse(success=False, code=400, message="时间戳格式错误，必须为数字")
 
     # 生成链路追踪ID
     trace_id = str(uuid.uuid4())
 
     # 组装 device / user / ext
     device = {}
-    if device_os: device["os"] = device_os
-    if device_model: device["model"] = device_model
-    if device_brand: device["brand"] = device_brand
-    if device_idfa: device["idfa"] = device_idfa
-    if device_caid: device["caid"] = device_caid
-    if device_oaid: device["oaid"] = device_oaid
-    if device_imei: device["imei"] = device_imei
-    if device_android_id: device["android_id"] = device_android_id
-    if device_os_version: device["os_version"] = device_os_version
-    if device_mac: device["mac"] = device_mac
+    if cleaned_query.get("device_os"): device["os"] = cleaned_query.get("device_os")
+    if cleaned_query.get("device_model"): device["model"] = cleaned_query.get("device_model")
+    if cleaned_query.get("device_brand"): device["brand"] = cleaned_query.get("device_brand")
+    if cleaned_query.get("device_idfa"): device["idfa"] = cleaned_query.get("device_idfa")
+    if cleaned_query.get("device_caid"): device["caid"] = cleaned_query.get("device_caid")
+    if cleaned_query.get("device_oaid"): device["oaid"] = cleaned_query.get("device_oaid")
+    if cleaned_query.get("device_imei"): device["imei"] = cleaned_query.get("device_imei")
+    if cleaned_query.get("device_android_id"): device["android_id"] = cleaned_query.get("device_android_id")
+    if cleaned_query.get("device_os_version"): device["os_version"] = cleaned_query.get("device_os_version")
+    if cleaned_query.get("device_mac"): device["mac"] = cleaned_query.get("device_mac")
 
     user = {}
-    if user_phone_md5: user["phone_md5"] = user_phone_md5
-    if user_email_sha256: user["email_sha256"] = user_email_sha256
+    if cleaned_query.get("user_phone_md5"): user["phone_md5"] = cleaned_query.get("user_phone_md5")
+    if cleaned_query.get("user_email_sha256"): user["email_sha256"] = cleaned_query.get("user_email_sha256")
 
     ext = {}
-    if ext_custom_id: ext["custom_id"] = ext_custom_id
+    if cleaned_query.get("ext_custom_id"): ext["custom_id"] = cleaned_query.get("ext_custom_id")
 
     # 构造与原POST一致的请求体模型
     body = TrackRequest(
-        ds_id=ds_id,
-        event_type=event_type,
-        ad_id=ad_id,
-        channel_id=channel_id,
-        click_id=click_id,
-        ts=ts,
-        ip=ip,
-        ua=ua,
+        ds_id=ds_id_val,
+        event_type=event_type_val,
+        ad_id=cleaned_query.get("ad_id", ad_id),
+        channel_id=cleaned_query.get("channel_id", channel_id),
+        ts=ts_int,  # 使用转换后的整数时间戳
+        ip=cleaned_query.get("ip", ip),
+        ua=cleaned_query.get("ua", ua),
         device=device or None,
         user=user or None,
-        ext=ext or None,
-        device_os_version=device_os_version
+        ext=ext or None
     )
 
     # 解析并保存下游回调模板（URL编码→解码后保存）
-    # 幂等预查：如已存在相同 (ds_id,event_type,click_id) 记录，复用其 rid
-    rid_existing = None
-    try:
-        async with await get_session() as session:
-            from sqlalchemy import select
-            res = await session.execute(
-                select(RequestLog.rid)
-                .where(
-                    (RequestLog.ds_id == udm["meta"]["downstream_id"]) &
-                    (RequestLog.event_type == udm["event"]["type"]) &
-                    (RequestLog.click_id == udm["click"]["id"])
-                )
-                .order_by(RequestLog.id.desc())
-                .limit(1)
-            )
-            row = res.first()
-            if row and row[0]:
-                rid_existing = row[0]
-    except Exception:
-        pass
-
-    rid_to_use = rid_existing or trace_id
-
     callback_template: str | None = None
-    if callback:
+    callback_val = cleaned_query.get("callback", callback)
+    if callback_val:
         try:
-            callback_template = urllib.parse.unquote(callback)
-        except Exception:
-            callback_template = callback
-
+            callback_template = urllib.parse.unquote(callback_val)
+        except Exception as e:
+            debug(f"Failed to decode callback URL, using raw value: {e}")
+            callback_template = callback_val
 
     # 构造初始UDM用于路由
     udm_for_routing = _make_udm(body, request)
+    
+    # 新的幂等性设计：每次生成新的 rid，不再复用
+    rid_to_use = trace_id
 
     # 路由选择
-    up_id, ds_out = choose_route(udm_for_routing, CONFIG)
+    up_id, ds_out, enabled, throttle = choose_route(udm_for_routing, CONFIG)
+    
+    # 检查路由是否启用
+    if not enabled:
+        response.status_code = 400
+        return APIResponse(success=False, code=400, message="链接已关闭")
 
     # 构造最终UDM
     udm = _make_udm(body, request, up_id, body.ds_id)
@@ -315,29 +348,119 @@ async def track_event(request: Request,
     pass
 
     # 响应规则变更：
+    #  - 路由被禁用：400（链接已关闭）
     #  - 未找到上游：400（not_found）
     #  - 找到上游但转发失败：按下方返回 500
     if not up_id:
+        response.status_code = 400
         return APIResponse(success=False, code=400, message="链接已关闭")
 
     # 查找上游配置
     upstream_config = find_upstream_config(up_id, CONFIG)
     if not upstream_config:
-        return APIResponse(success=False, code=400, message="链接已关闭")
+        return APIResponse(success=False, code=500, message="链接已关闭")
 
-    # 分发到上游
+    # 提取路由级 custom_params（如存在）
+    route_params: Dict[str, Any] = {}
+    try:
+        matched_rule = find_matching_rule(udm_for_routing, CONFIG)
+        if isinstance(matched_rule, dict):
+            rp = matched_rule.get("custom_params")
+            if isinstance(rp, dict):
+                route_params = rp
+    except Exception as e:
+        debug(f"failed to load route custom_params: {e}")
+
+    # 读取去抖开关：路由级优先生效，支持 True/False；否则回退到全局 settings.debounce.enabled
+    debounce_enabled: bool = False
+    try:
+        route_debounce = None
+        if isinstance(matched_rule, dict):
+            route_debounce = matched_rule.get("debounce")
+        if isinstance(route_debounce, bool):
+            debounce_enabled = route_debounce is True
+        else:
+            debounce_enabled = bool(CONFIG.get("settings", {}).get("debounce", {}).get("enabled", False))
+    except Exception:
+        debounce_enabled = False
+
+    if debounce_enabled:
+        # 仅转发最后一条：提交到去抖管理器，由后台定时发送
+        try:
+            max_wait_ms = int(CONFIG.get("settings", {}).get("debounce", {}).get("max_wait_ms", 20000))
+        except Exception:
+            max_wait_ms = 20000
+        # 使用服务端时间保证排序单调，避免客户端乱序覆盖
+        _client_ts = int(udm.get("time", {}).get("ts") or 0)
+        _now_ts = int(time.time() * 1000)
+        order_ts_ms = _client_ts if _client_ts > _now_ts else _now_ts
+        device_key = _build_device_key(udm)
+        debounce_key = f"{up_id}:{udm.get('ad', {}).get('ad_id', '')}:{device_key}"
+
+        # 构建可序列化任务，便于 Redis 去抖
+        job = {
+            "trace_id": rid_to_use,
+            "udm": udm,
+            "upstream_id": up_id,
+            "event_type": event_type,
+            "callback_template": callback_template,
+            "route_params": route_params,
+        }
+
+        try:
+            manager = get_manager()
+            # 守护：若管理器未运行则自动拉起，避免非标准启动导致后台未工作
+            if not getattr(manager, "_running", False):
+                try:
+                    await manager.start()
+                except Exception as _e:
+                    warning(f"Debounce manager auto-start failed: {_e}")
+            # Redis 版：走 submit_job；内存版：走 submit
+            if hasattr(manager, "submit_job"):
+                await manager.submit_job(
+                    key=debounce_key,
+                    order_ts_ms=order_ts_ms,
+                    max_wait_ms=max_wait_ms,
+                    job=job,
+                )
+            else:
+                async def _send_factory():
+                    try:
+                        from ..services.forwarder import dispatch_click_job
+                        await dispatch_click_job(job)
+                    except Exception as e:
+                        error(f"Debounce send failed: {e}")
+                await manager.submit(
+                    key=debounce_key,
+                    order_ts_ms=order_ts_ms,
+                    max_wait_ms=max_wait_ms,
+                    send_factory=_send_factory,
+                )
+        except Exception as e:
+            warning(f"Debounce submit failed, fallback to direct send: {e}")
+            try:
+                from ..services.forwarder import dispatch_click_job
+                upstream_status, upstream_response = await dispatch_click_job(job)
+                if upstream_status != 200:
+                    return APIResponse(success=False, code=500, message="network_error")
+            except Exception as ex:
+                error(f"Fallback direct send failed: {ex}")
+                return APIResponse(success=False, code=500, message="server_error")
+
+        # 去抖模式：接受请求并返回成功，实际发送在后台完成
+        return APIResponse(success=True, code=200, message="ok")
+
+    # 非去抖：同步发送
     try:
         upstream_status, upstream_response = await _dispatch_to_upstream(
-            trace_id, udm, upstream_config, event_type, callback_template
+            rid_to_use, udm, upstream_config, event_type, callback_template, route_params
         )
 
-        # 200 认为成功；其它按HTTP对齐
         if upstream_status == 200:
             return APIResponse(success=True, code=200, message="ok")
         else:
-            # 非200均视为上游失败，统一返回500
             return APIResponse(success=False, code=500, message="network_error")
 
     except Exception as e:
-        logging.error(f"Error dispatching to upstream: {e}")
+        error(f"Error dispatching to upstream: {e}")
         return APIResponse(success=False, code=500, message="server_error")

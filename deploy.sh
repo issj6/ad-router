@@ -18,14 +18,26 @@ if ! docker compose version &> /dev/null; then
     exit 1
 fi
 
-# 检查必要文件
-required_files=("config.yaml" "requirements.txt")
-for file in "${required_files[@]}"; do
-    if [ ! -f "$file" ]; then
-        echo "❌ 缺少必要文件: $file"
-        exit 1
-    fi
-done
+# 检查必要文件和目录
+echo "🔍 检查配置文件..."
+if [ ! -d "config" ]; then
+    echo "❌ 缺少配置目录: config/"
+    echo "💡 请确保 config/ 目录存在且包含 main.yaml"
+    exit 1
+fi
+
+if [ ! -f "config/main.yaml" ]; then
+    echo "❌ 缺少主配置文件: config/main.yaml"
+    echo "💡 请创建主配置文件，参考 config/README.md"
+    exit 1
+fi
+
+if [ ! -f "requirements.txt" ]; then
+    echo "❌ 缺少依赖文件: requirements.txt"
+    exit 1
+fi
+
+echo "✅ 配置文件检查通过"
 
 # 创建日志目录
 mkdir -p logs

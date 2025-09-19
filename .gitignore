@@ -119,3 +119,7 @@ Thumbs.db
 data/sqlite/*.db
 logs/
 *.pid
+
+# Configuration files
+# config/
+

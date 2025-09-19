@@ -8,7 +8,6 @@ class TrackRequest(BaseModel):
             "event_type": "click",
             "ad_id": "ad_123",
             "channel_id": "ch_01",
-            "click_id": "ck_abc123",
             "ts": 1734508800000,
             "ip": "1.2.3.4",
             "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)",
@@ -32,8 +31,7 @@ class TrackRequest(BaseModel):
     ad_id: str = Field(..., description="广告ID")
     channel_id: Optional[str] = Field(None, description="渠道ID")
 
-    # 点击相关字段
-    click_id: Optional[str] = Field(None, description="点击ID，click 推荐必传；imp 可选")
+
 
     # 时间和网络字段
     ts: Optional[int] = Field(None, description="时间戳（毫秒），不传则使用服务器时间")
@@ -58,25 +56,21 @@ class APIResponse(BaseModel):
     message: str = Field(..., description="描述信息")
 
 class HealthResponse(BaseModel):
-    ok: bool
-    timestamp: int
-    version: str
-    db_ok: bool | None = None
-
-    model_config = ConfigDict(json_schema_extra={
-        "example": {"ok": True, "timestamp": 1734508800, "version": "1.0.0", "db_ok": True}
-    })
-
-class HealthResponse(BaseModel):
     """健康检查响应模型"""
     ok: bool = Field(..., description="服务是否正常")
-    timestamp: Optional[int] = Field(None, description="当前时间戳")
-    version: Optional[str] = Field(None, description="服务版本")
+    timestamp: int = Field(..., description="当前时间戳")
+    version: str = Field(..., description="服务版本")
+    db_ok: Optional[bool] = Field(None, description="数据库连接状态")
+    debounce_ok: Optional[bool] = Field(None, description="去抖管理器运行状态")
+    redis_ok: Optional[bool] = Field(None, description="Redis 连接状态")
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "ok": True,
             "timestamp": 1734508800,
-            "version": "1.0.0"
+            "version": "1.0.0",
+            "db_ok": True,
+            "debounce_ok": True,
+            "redis_ok": True
         }
     })

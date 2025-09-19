@@ -17,7 +17,7 @@ python start.py --host 0.0.0.0 --port 6789 --reload
 curl 'http://127.0.0.1:6789/health'
 ```
 
-> 当前优先加载 `config_notnull.yaml`，若需使用 `config.yaml`，可重命名/删除 `config_notnull.yaml` 或在后续扩展 --config 参数。
+> 当前使用多文件配置架构，配置文件位于 `config/` 目录，主配置文件为 `config/main.yaml`。
 
 ---
 

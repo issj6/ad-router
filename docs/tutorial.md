@@ -7,7 +7,7 @@ OCPX中转系统是一个高性能的广告追踪中转服务，作为中游角�
 1. **统一接口**：为所有下游提供统一的API接口，屏蔽上游差异
 2. **配置驱动**：通过简单的YAML配置即可接入新的上游/下游，无需编码
 3. **高性能**：基于FastAPI异步框架，支持高并发处理
-4. **数据隔离**：每日独立的SQLite数据库，便于数据管理和备份
+4. **数据隔离**：MySQL数据库，高可靠性和性能保障
 5. **链路追踪**：完整的请求链路追踪，便于问题排查
 
 ## 系统架构
@@ -24,7 +24,7 @@ OCPX中转系统是一个高性能的广告追踪中转服务，作为中游角�
 - **路由引擎**：根据配置规则选择目标上游
 - **映射引擎**：基于DSL配置进行字段映射和数据转换
 - **回调处理**：处理上游回调并转发给下游
-- **数据存储**：每日滚动的SQLite数据库
+- **数据存储**：MySQL数据库，异步连接池
 
 ## 快速开始
 
@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
 ### 2. 配置修改
 
-编辑 `config.yaml` 文件：
+编辑 `config/main.yaml` 文件：
 
 ```yaml
 settings:
@@ -77,7 +77,7 @@ curl http://localhost:8000/health
 settings:
   callback_base: "https://cbkpk.notnull.cc"  # 回调基础域名
   timezone: "Asia/Shanghai"                   # 时区设置
-  data_dir: "./data/sqlite"                   # 数据库存储目录
+
   app_secret: "CHANGE_ME_TO_RANDOM_SECRET"    # 用于token签名的密钥
 ```
 
@@ -225,26 +225,31 @@ curl "http://localhost:8000/cb/{token}?clid=test_click_123&event_name=install&ts
 
 ## 数据管理
 
-### 数据库文件
+### 数据库配置
 
-- 位置：`./data/sqlite/YYYYMMDD.db`
-- 格式：每日一个SQLite文件
+系统使用MySQL数据库，需要通过环境变量配置连接信息：
+
+```bash
+export MYSQL_HOST=your_mysql_host
+export MYSQL_USER=your_mysql_user  
+export MYSQL_PASSWORD=your_mysql_password
+export MYSQL_DB=your_mysql_database
+```
+
 - 表结构：
-  - `event_log` - 事件日志
-  - `dispatch_log` - 分发日志
-  - `callback_log` - 回调日志
+  - `request_log` - 统一日志记录表
 
 ### 数据查询
 
 ```bash
-# 连接今日数据库
-sqlite3 ./data/sqlite/$(date +%Y%m%d).db
+# 连接数据库
+mysql -h $MYSQL_HOST -u $MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DB
 
 # 查看事件统计
-SELECT ds_id, event_type, COUNT(*) FROM event_log GROUP BY ds_id, event_type;
+SELECT ds_id, event_type, COUNT(*) FROM request_log GROUP BY ds_id, event_type;
 
-# 查看分发状态
-SELECT direction, partner_id, status, COUNT(*) FROM dispatch_log GROUP BY direction, partner_id, status;
+# 查看请求详情  
+SELECT rid, ds_id, up_id, event_type, created_at FROM request_log ORDER BY created_at DESC LIMIT 10;
 ```
 
 ## 生产部署建议
@@ -279,34 +284,37 @@ server {
 ### 3. 监控告警
 
 - 监控接口响应时间和成功率
-- 监控数据库文件大小
+- 监控数据库连接状态
 - 监控上游/下游接口状态
 - 设置异常告警
 
 ### 4. 数据备份
 
 ```bash
-# 定期备份数据库文件
-rsync -av ./data/sqlite/ /backup/ocpx-data/
+# MySQL数据库备份
+mysqldump -h $MYSQL_HOST -u $MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DB > backup_$(date +%Y%m%d).sql
+
+# 定期备份脚本示例
+0 2 * * * mysqldump -h $MYSQL_HOST -u $MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DB | gzip > /backup/ocpx-$(date +\%Y\%m\%d).sql.gz
 ```
 
 ## 常见问题
 
 ### Q: 如何添加新的上游？
 
-A: 在 `config.yaml` 的 `upstreams` 部分添加新配置，然后重启服务。
+A: 使用配置管理工具：`python tools/config_manager.py add-upstream ./config new_upstream_id --name "新上游"`
 
 ### Q: 如何修改路由规则？
 
-A: 修改 `config.yaml` 的 `routes` 部分，支持热重载（重启服务生效）。
+A: 修改 `config/main.yaml` 的 `routes` 部分，然后重启服务。
 
 ### Q: 如何查看详细日志？
 
 A: 检查应用日志输出，每个请求都有唯一的 `trace_id` 用于追踪。
 
-### Q: 数据库文件过大怎么办？
+### Q: 如何优化数据库性能？
 
-A: 系统每日自动创建新的数据库文件，可以定期清理旧文件。
+A: 建议定期监控MySQL数据库性能，为高频查询字段添加索引，定期清理历史数据。
 
 ## 技术支持
 

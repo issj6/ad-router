@@ -1,0 +1,78 @@
+id: "yanymobi"
+name: "研漾 OCPX"
+description: "研漾 OCPX DSP 点击与回传（不含小程序/小游戏链路）"
+
+adapters:
+  outbound:
+    click:
+      method: "GET"
+      url: "https://track.yanymobi.com/api/activate?ch={{ch}}&event_type={{event_type}}&trackLinkId={{trackLinkId}}&tid={{tid}}&callback_url={{callback}}&oaid={{oaid}}&oaid_md5={{oaid_md5}}&imei={{imei}}&imei_md5={{imei_md5}}&ip={{ip}}&ua={{ua}}&os={{os}}&deviceMake={{device_make}}&model={{model}}&osv={{osv}}&idfa={{idfa}}&idfa_md5={{idfa_md5}}&caid={{caid}}&android_id={{android_id}}&android_id_md5={{android_id_md5}}&event_time={{event_time}}&cb_ext={{cb_ext}}"
+      macros:
+        # 链接与跟踪
+        ch: "secret_ref('ch') | coalesce('')"
+        trackLinkId: "secret_ref('trackLinkId') | coalesce('')"
+        event_type: "secret_ref('event_type') | coalesce('1')"
+        tid: "uuid_v4()"
+
+        # 回传地址（一次编码）
+        callback: "cb_url() | url_encode()"
+
+        # 设备与网络
+        oaid: "udm.device.oaid | url_encode()"
+        oaid_md5: "udm.device.oaid | hash_md5() | to_upper()"
+        imei: "udm.device.imei | url_encode()"
+        imei_md5: "udm.device.imei | hash_md5() | to_upper()"
+        ip: "udm.net.ip | url_encode()"
+        ua: "udm.net.ua | normalize_encode()"
+        os: "udm.device.os | to_lower()"
+        device_make: "udm.device.brand | url_encode()"
+        model: "udm.device.model | url_encode()"
+        osv: "udm.device.os_version | url_encode()"
+        idfa: "udm.device.idfa | url_encode()"
+        idfa_md5: "udm.device.idfa | hash_md5() | to_upper()"
+        caid: "udm.device.caid | url_encode()"
+        android_id: "udm.device.android_id | url_encode()"
+        android_id_md5: "udm.device.android_id | hash_md5() | to_upper()"
+        event_time: "udm.time.ts"
+
+        # 广告信息（可选）
+        cb_ext: "udm.meta.ext.custom_id | url_encode()"
+      timeout_ms: 8000
+      retry: { max: 2, backoff_ms: 500 }
+
+  inbound_callback:
+    event:
+      source: "query"
+      field_map:
+        "udm.event.type": "const:event"
+        # 研漾回传示例参数名：covtype（对应 __EVENT_TYPE__ 宏）
+        "udm.event.name": "query.covtype"
+        # 研漾回传示例参数名：trackid（对应 __CLICKID__ 宏）
+        "udm.click.id": "query.trackid"
+        "udm.time.ts": "now_ms()"
+      event_name_map:
+        "1": ACTIVATED
+        "2": REGISTERED
+        "3": ACTIVATED
+        "4": PAID
+        "5": RETAINED
+        "51": RETAINED
+        "52": RETAINED
+        "53": RETAINED
+        "54": RETAINED
+        "6": RETAINED
+        "61": RETAINED
+        "7": DOWNLOAD
+        "8": VISIT
+        "9": RECALL
+        "10": ACTION
+        "11": FIRST_PURCHASE
+        "12": WAKE
+        "13": VALID_WAKE
+        "14": ORDER
+        "15": LEAD
+        "16": VALID_LEAD
+        "99": CUSTOM
+        "100": UNKNOWN
+
+

@@ -3,7 +3,9 @@ import hashlib
 import hmac
 import time
 import re
+import uuid
 from typing import Any, Dict, Union
+from .utils.logger import debug
 
 def _get_path(ctx: Dict[str, Any], path: str) -> Any:
     """从上下文中获取路径值，支持点号分隔的嵌套路径"""
@@ -66,23 +68,26 @@ def _apply_function(val: Any, fn: str) -> Any:
             pass
         return val
     elif fn == "floor()":
-        # 向下取整：仅当值是“纯数字字符串（可含小数）”或数值类型时生效；否则返回默认 "14"
+        # 向下取整：仅当值是"纯数字字符串（可含小数）"或数值类型时生效；否则返回空字符串
         # 合法示例："13", "13.7", 13, 13.7
         # 非法示例："ABC123", "v13.1", "13.1beta"
         try:
             if val is None:
-                return "14"
+                return ""
             # 数值类型直接处理
             if isinstance(val, (int, float)):
                 return str(int(float(val)))
             # 字符串：必须为整串纯数字/小数
             s = str(val).strip()
             if not re.fullmatch(r"\d+(?:\.\d+)?", s):
-                return "14"
+                return ""
             num = float(s)
             return str(int(num))
         except Exception:
-            return "14"
+            return ""
+    elif fn == "uuid()" or fn == "uuid_v4()":
+        # 生成 UUID v4，忽略输入值
+        return str(uuid.uuid4())
 
     return val
 
@@ -99,6 +104,22 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
     - path.to.value - 路径访问
     """
     expr = expr.strip()
+    
+    # 管道操作优先处理（避免与其他语法冲突）
+    if "|" in expr:
+        parts = [x.strip() for x in expr.split("|")]
+        val = eval_expr(parts[0], ctx, secrets, helpers)
+
+        for fn in parts[1:]:
+            # 处理coalesce函数
+            if fn.startswith("coalesce("):
+                if val is None or val == "":
+                    inner = fn[len("coalesce("):-1]
+                    val = inner.strip("'\"")
+            else:
+                val = _apply_function(val, fn)
+
+        return val
     
     # 常量值
     if expr.startswith("const:"):
@@ -175,25 +196,19 @@ def eval_expr(expr: str, ctx: Dict[str, Any], secrets: Dict[str, str], helpers: 
         except Exception:
             return ""
 
-    # 管道操作 "path | fn() | fn2()" —— 优先处理管道，再处理具体函数（如 cb_url）
-    if "|" in expr:
-        parts = [x.strip() for x in expr.split("|")]
-        val = eval_expr(parts[0], ctx, secrets, helpers)
 
-        for fn in parts[1:]:
-            # 处理coalesce函数
-            if fn.startswith("coalesce("):
-                if val is None or val == "":
-                    inner = fn[len("coalesce("):-1]
-                    val = inner.strip("'\"")
-            else:
-                val = _apply_function(val, fn)
-
-        return val
 
     # 回调URL助手（放在管道处理之后，保证如 cb_url() | url_encode() 生效）
     if expr.startswith("cb_url("):
         return helpers.get("cb_url", lambda: "")()
+    
+    # 当前时间戳助手（毫秒）
+    if expr.startswith("now_ms("):
+        return int(time.time() * 1000)
+    
+    # UUID v4 生成
+    if expr.startswith("uuid_v4(") or expr.startswith("uuid("):
+        return str(uuid.uuid4())
     
     # 路径访问
     if "." in expr:
@@ -214,7 +229,8 @@ def render_template(url_tmpl: str, macros: Dict[str, str], ctx: Dict[str, Any], 
     for name, expr in (macros or {}).items():
         try:
             values[name] = eval_expr(expr, ctx, secrets, helpers)
-        except Exception:
+        except Exception as e:
+            debug(f"Failed to evaluate macro '{name}': {e}")
             values[name] = ""
     
     # 替换模板中的占位符

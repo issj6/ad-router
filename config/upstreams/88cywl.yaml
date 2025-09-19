@@ -1,0 +1,53 @@
+id: "88cywl"
+name: "88CYWL"
+description: "88cywl 媒体广告平台"
+
+adapters:
+  outbound:
+    click:
+      method: "GET"
+      url: "http://cyclick.88cywl.cn/Click?advertiser={{advertiser}}&fa_id={{fa_id}}&aid={{aid}}&os={{os}}&code={{code}}&gid={{gid}}&ip={{ip}}&idfa={{idfa}}&idfamd5={{idfamd5}}&ua={{ua}}&callback={{callback}}&ctime={{ctime}}&caid={{caid}}&oaid={{oaid}}&imei={{imei}}&android_id={{android_id}}&model={{model}}&imeiMD5={{imei_md5}}&oaidMd5={{oaid_md5}}"
+      macros:
+        advertiser: "secret_ref('advertiser') | coalesce('')"
+        fa_id: "secret_ref('fa_id') | coalesce('')"
+        os: "secret_ref('os') | coalesce('')"
+        code: "secret_ref('code') | coalesce('CODE_DEFAULT')"
+        gid: "secret_ref('gid') | coalesce('GID_DEFAULT')"
+        aid: "secret_ref('aid') | coalesce('')"
+
+        ip: "udm.net.ip | url_encode()"
+        idfa: "udm.device.idfa | url_encode()"
+        idfamd5: "udm.device.idfa | hash_md5() | to_upper()"
+        ua: "udm.net.ua | normalize_encode()"
+        callback: "cb_url() | url_encode()"
+        ctime: "udm.time.ts"
+        caid: "udm.device.caid | url_encode()"
+        oaid: "udm.device.oaid | url_encode()"
+        imei: "udm.device.imei | url_encode()"
+        android_id: "udm.device.android_id | url_encode()"
+        model: "udm.device.model | url_encode()"
+        imei_md5: "udm.device.imei | hash_md5() | to_upper()"
+        oaid_md5: "udm.device.oaid | hash_md5() | to_upper()"
+      timeout_ms: 8000
+      retry: { max: 2, backoff_ms: 500 }
+
+  inbound_callback:
+    event:
+      source: "query"
+      field_map:
+        "udm.event.type": "const:event"
+        "udm.event.name": "query.conv_action"
+        "udm.time.ts": "now_ms()"
+      event_name_map:
+        android_activate: ACTIVATED
+        ios_activate: ACTIVATED
+        android_register: REGISTERED
+        ios_register: REGISTERED
+        android_purchase: PAID
+        ios_purchase: PAID
+        android_day1retention: RETAINED
+        ios_day1retention: RETAINED
+        android_retention: RETAINED
+        ios_retention: RETAINED
+
+

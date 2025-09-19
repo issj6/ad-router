@@ -25,31 +25,56 @@ def check_dependencies():
 
 def check_config():
     """检查配置文件"""
-    if not os.path.exists("config_example.yaml"):
-        print("❌ 配置文件 config_example.yaml 不存在")
+    config_dir = os.getenv("CONFIG_DIR", "./config")
+    main_config_file = os.path.join(config_dir, "main.yaml")
+    
+    # 检查是否有远程配置URL
+    main_config_url = os.getenv("MAIN_CONFIG_URL")
+    if main_config_url:
+        print(f"✅ 使用远程主配置: {main_config_url}")
+        return True
+    
+    # 检查本地配置目录
+    if not os.path.exists(config_dir):
+        print(f"❌ 配置目录不存在: {config_dir}")
+        print("💡 解决方案:")
+        print("   1. 设置环境变量 CONFIG_DIR 指向配置目录")
+        print("   2. 或创建默认配置目录 ./config")
+        print("   3. 或设置环境变量 MAIN_CONFIG_URL 指向远程配置")
+        return False
+    
+    if not os.path.exists(main_config_file):
+        print(f"❌ 主配置文件不存在: {main_config_file}")
+        print("💡 解决方案:")
+        print("   1. 创建 main.yaml 文件")
+        print("   2. 参考 config/README.md 了解配置格式")
         return False
     
     try:
         import yaml
-        with open("config_example.yaml", "r", encoding="utf-8") as f:
+        with open(main_config_file, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         
         # 检查必要配置
         settings = config.get("settings", {})
-        if settings.get("app_secret") == "CHANGE_ME_TO_RANDOM_SECRET":
-            print("⚠️  警告: 请修改 config_example.yaml 中的 app_secret 为随机密钥")
+        if not settings:
+            print("⚠️  警告: 配置文件中缺少 settings 配置")
+        
+        upstream_configs = config.get("upstream_configs", [])
+        if not upstream_configs:
+            print("⚠️  警告: 没有配置任何上游")
         
         print("✅ 配置文件检查通过")
+        print(f"   配置目录: {config_dir}")
+        print(f"   上游数量: {len(upstream_configs)}")
         return True
     except Exception as e:
         print(f"❌ 配置文件格式错误: {e}")
         return False
 
 def create_data_dir():
-    """创建数据目录"""
-    data_dir = "./data/sqlite"
-    os.makedirs(data_dir, exist_ok=True)
-    print(f"✅ 数据目录已创建: {data_dir}")
+    """创建数据目录（MySQL模式下无需操作）"""
+    print("✅ 使用MySQL数据库，无需创建本地数据目录")
 
 def main():
     parser = argparse.ArgumentParser(description="OCPX中转系统启动脚本")
@@ -79,7 +104,7 @@ def main():
     if args.production:
         # 生产模式使用gunicorn
         try:
-            import gunicorn
+            import gunicorn  # type: ignore
         except ImportError:
             print("❌ 生产模式需要安装 gunicorn: pip install gunicorn")
             sys.exit(1)

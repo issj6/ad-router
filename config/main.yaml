@@ -1,0 +1,219 @@
+# OCPX中转系统 - 主配置文件
+# 这个文件包含系统基础设置、上游配置引用和路由规则
+
+# 系统基础配置
+settings:
+  callback_base: "http://ikpk.notnull.cc:6789"
+  timezone: "Asia/Shanghai"
+  app_secret: "notnull_callback_secret_2024"
+  redis:
+    host: "my-redis"
+    port: 6379
+    password: "Yyy443556.0"
+    db: 0
+  debounce:
+    enabled: true
+    # 固定窗口：首次到达 + max_wait_ms
+    max_wait_ms: 20000
+    # worker 消费参数
+    batch: 200
+    concurrency: 64
+    # latest 键兜底 TTL：3 小时
+    latest_ttl_ms: 10800000
+#  ingress_aliases:
+#    event_type: [ "reporting_type", "etype", "type" ]
+#    ad_id: [ "ca_id", "aid", "adid" ]
+#    click_id: [ "clickid", "clid", "clickId" ]
+#    ua: [ "user_agent", "ua" ]
+#    device_os: [ "os" ]
+#    device_model: [ "model" ]
+#    device_android_id: [ "androidId", "android_id", "androidid" ]
+#    device_mac: [ "mac", "device_mac" ]
+#    callback: [ "callback_url", "callback" ]
+
+# 上游配置文件列表
+upstream_configs:
+  - id: "adapi"
+    name: "微风互动"
+    source: "local"
+    path: "upstreams/adapi.yaml"
+    required: true
+    enabled: true
+    
+  - id: "duokaiyou"
+    name: "多开游"
+    source: "local"
+    path: "upstreams/duokaiyou.yaml"
+    required: true
+    enabled: true
+
+  - id: "88cywl"
+    name: "橙益"
+    source: "local"
+    path: "upstreams/88cywl.yaml"
+    required: true
+    enabled: true
+
+  - id: "yanymobi"
+    name: "研漾 OCPX"
+    source: "local"
+    path: "upstreams/yanymobi.yaml"
+    required: true
+    enabled: true
+
+# 下游配置文件列表（可选）
+downstream_configs: []
+
+# 路由配置 - 决定请求如何路由到不同的上游
+routes:
+  - match_key: "ad_id"
+    rules:
+      # 微风互动-永远的蔚蓝星球
+      - equals: "67576"
+        upstream: "adapi"
+        enabled: false
+        throttle: 0.2  # 扣量20%
+        callback_events:
+          REGISTERED: REGISTERED
+      
+      # 微风互动-燕云十六声
+      - equals: "10_60_683572_8"
+        upstream: "adapi"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          ACTIVATED: ACTIVATED
+        debounce: true
+      
+      # 微风互动-地下城堡4
+      - equals: "1198"
+        upstream: "adapi"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          REGISTERED: REGISTERED
+        debounce: true
+
+####################################################################
+        
+      # 巴掌互动-向僵尸开炮
+      - equals: "68a58f8ab82a4"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          REGISTERED: REGISTERED
+        debounce: true
+      
+      # 巴掌互动
+      - equals: "68ae719ed76c8"
+        upstream: "duokaiyou"
+        enabled: false
+        throttle: 0.2
+        callback_events:
+          REGISTERED: REGISTERED
+
+      # 巴掌互动 - 燕云十六声-安卓
+      - equals: "68c287ff94227"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          REGISTERED: ACTIVATED
+        debounce: true
+      
+      # 巴掌互动 - 地下城堡4-安卓
+      - equals: "68c8f9b76af8d"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events:
+          ACTIVATED: ACTIVATED
+        debounce: true
+
+####################################################################
+
+      # 88cywl - 燕云十六声-安卓
+      - equals: "258199621"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "22"
+          fa_id: "1248"
+          os: "2"
+          code: "258199621"
+          gid: "10908"
+          aid: "20250903"
+        debounce: true
+        callback_events:
+          REGISTERED: REGISTERED
+      
+      # 88cywl - 守塔不能停-IOS
+      - equals: "651934282"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "1"
+          fa_id: "1074"
+          os: "1"
+          code: "651934282"
+          gid: "10801"
+          aid: "20250909"
+        debounce: true
+        callback_events:
+          REGISTERED: REGISTERED
+      
+      # 88cywl - 斗罗大陆猎魂世界-IOS
+      - equals: "673153248"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "1"
+          fa_id: "1249"
+          os: "1"
+          code: "673153248"
+          gid: "10954"
+          aid: "20250917"
+        debounce: true
+        callback_events:
+          ACTIVATED: ACTIVATED
+      
+       # 88cywl - 斗罗大陆猎魂世界-安卓
+      - equals: "258263866"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "22"
+          fa_id: "1294"
+          os: "2"
+          code: "258263866"
+          gid: "10954"
+          aid: "20250917"
+        debounce: true
+        callback_events:
+          REGISTERED: REGISTERED
+      
+      # 88cywl - 仙遇-IOS
+      - equals: "120759013"
+        upstream: "88cywl"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          advertiser: "2"
+          fa_id: "1474"
+          os: "1"
+          code: "120759013"
+          gid: "10998"
+          aid: "20250917"
+        debounce: true
+        callback_events:
+          ACTIVATED: ACTIVATED
+        
+    # 兜底配置：当没有匹配到具体规则时使用
+    fallback_upstream: ""  # 空字符串表示无兜底
+    fallback_enabled: false
+    fallback_throttle: 0.2

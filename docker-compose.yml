@@ -6,6 +6,9 @@ services:
     build: .
     container_name: adrouter-app
     restart: unless-stopped
+    networks:
+      - adrouter_net
+      - external_redis_net
     ports:
       - "6789:6789"
     environment:
@@ -15,12 +18,20 @@ services:
       MYSQL_USER: ${MYSQL_USER:-root}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-123456}
       MYSQL_DB: ${MYSQL_DB:-ad_router}
+      
+      # 日志配置 - 默认关闭以获得最佳性能
+      ENABLE_LOGGING: ${ENABLE_LOGGING:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./config_notnull.yaml:/app/config_notnull.yaml:ro
+      - ./config:/app/config:ro
       - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6789/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+networks:
+  adrouter_net:
+    external: true
+    name: adrouter_net

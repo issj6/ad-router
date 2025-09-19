@@ -8,12 +8,12 @@ class RequestLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     rid: Mapped[str] = mapped_column(String(36), unique=True, index=True)  # 回调关联ID（等于trace_id）
-    ds_id: Mapped[str] = mapped_column(String(64), index=True)
-    up_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    ds_id: Mapped[str] = mapped_column(String(64))
+    up_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     event_type: Mapped[str] = mapped_column(String(16))  # click/imp
-    ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    click_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    ad_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True )
+
     ts: Mapped[int] = mapped_column(BigInteger)  # 毫秒
     os: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
@@ -27,9 +27,12 @@ class RequestLog(Base):
 
     # 时间字段
     track_time: Mapped[str | None] = mapped_column(String(32), nullable=True)  # track创建时间（上海时区）
+    
+    # 发送状态
+    track_status: Mapped[int] = mapped_column(Integer, default=0)  # 0:未发送, 1:发送成功, 2:发送失败
 
     # 回调状态
-    is_callback_sent: Mapped[int] = mapped_column(Integer, default=0)  # 0/1
+    is_callback_sent: Mapped[int] = mapped_column(Integer, default=0)  # 0:未回拨, 1:已回拨, 2:被扣量, 3:回拨失败
     callback_time: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 回调时间（上海时区）
     callback_event_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

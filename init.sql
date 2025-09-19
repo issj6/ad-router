@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS request_log (
     event_type VARCHAR(16) NOT NULL,
     ad_id VARCHAR(128) NULL,
     channel_id VARCHAR(64) NULL,
-    click_id VARCHAR(128) NULL,
+
     ts BIGINT NOT NULL,
     os VARCHAR(16) NULL,
     upload_params JSON NULL,
@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS request_log (
     upstream_url VARCHAR(2048) NULL,
     downstream_url VARCHAR(2048) NULL,
     track_time VARCHAR(32) NULL,
-    is_callback_sent INT DEFAULT 0,
+    track_status INT DEFAULT 0,  -- 0:未发送, 1:发送成功, 2:发送失败
+    is_callback_sent INT DEFAULT 0,  -- 0:未回拨, 1:已回拨, 2:被扣量, 3:回拨失败
     callback_time VARCHAR(32) NULL,
     callback_event_type VARCHAR(64) NULL,
     
@@ -30,6 +31,6 @@ CREATE TABLE IF NOT EXISTS request_log (
     INDEX idx_ds_id (ds_id),
     INDEX idx_up_id (up_id),
     INDEX idx_ad_id (ad_id),
-    INDEX idx_click_id (click_id),
+
     INDEX idx_req_ds_ad (ds_id, ad_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

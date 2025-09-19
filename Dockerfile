@@ -8,6 +8,10 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
+# 默认日志配置 - 生产环境关闭日志获得最佳性能
+ENV ENABLE_LOGGING=false
+ENV LOG_LEVEL=INFO
+
 # 配置阿里云Debian源
 RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
     sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources

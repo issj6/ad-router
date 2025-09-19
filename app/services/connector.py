@@ -1,8 +1,8 @@
 import httpx
 import asyncio
 import json
-import logging
 from typing import Dict, Any, Optional, Tuple
+from ..utils.logger import info, warning, error
 
 # 全局HTTP客户端
 _client: Optional[httpx.AsyncClient] = None
@@ -18,17 +18,17 @@ async def get_client() -> httpx.AsyncClient:
 
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(
-                connect=2.0,  # 连接超时
+                connect=8.0,  # 连接超时
                 read=5.0,  # 读取超时
                 write=5.0,  # 写入超时
                 pool=10.0  # 连接池超时
             ),
             limits=httpx.Limits(
-                max_keepalive_connections=100,  # 最大保持连接数
-                max_connections=200,  # 最大连接数
+                max_keepalive_connections=200,  # 最大保持连接数
+                max_connections=300,  # 最大连接数
                 keepalive_expiry=30.0  # 连接保持时间
             ),
-            follow_redirects=True,
+            follow_redirects=False,
             verify=True  # 验证SSL证书
         )
     return _client
@@ -92,19 +92,19 @@ async def http_send(method: str, url: str, headers: Optional[Dict[str, str]] = N
         try:
             response_data = response.json()
         except Exception:
-            # 如果不是JSON，返回文本
+            # 如果响应不是JSON格式，返回原始文本（这是正常情况，不需要记录错误）
             response_data = response.text
 
         return response.status_code, response_data
 
     except httpx.TimeoutException:
-        logging.warning(f"HTTP request timeout: {method} {url}")
+        warning(f"HTTP request timeout: {method} {url}")
         return 408, {"error": "timeout"}
     except httpx.ConnectError:
-        logging.warning(f"HTTP connection error: {method} {url}")
+        warning(f"HTTP connection error: {method} {url}")
         return 503, {"error": "connection_failed"}
     except Exception as e:
-        logging.error(f"HTTP request error: {method} {url}, error: {e}")
+        error(f"HTTP request error: {method} {url}, error: {e}")
         return 500, {"error": str(e)}
 
 
@@ -126,7 +126,7 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
     Returns:
         (status_code, response_data) 元组
     """
-    # logging.info("********** 开始请求URL：" + url)
+    # 已替换为 Loguru 异步日志
     last_status, last_response = 500, {"error": "no_attempt"}
 
     for attempt in range(max_retries + 1):
@@ -135,8 +135,12 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
         # 记录最后一次结果
         last_status, last_response = status, response
 
-        # 成功或客户端错误（4xx）不重试
-        if status < 500:
+        # 成功：2xx/3xx 不重试
+        if 200 <= status < 400:
+            break
+
+        # 仅在 408（超时）时允许重试；其余状态码（含 4xx/5xx）不重试
+        if status != 408:
             break
 
         # 最后一次尝试，不再等待
@@ -145,7 +149,7 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
 
         # 等待后重试
         await asyncio.sleep(backoff_ms / 1000.0)
-        logging.info(f"Retrying HTTP request: {method} {url}, attempt {attempt + 2}")
+        info(f"Retrying HTTP request: {method} {url}, attempt {attempt + 2}")
 
     return last_status, last_response
 
