@@ -200,7 +200,7 @@ routes:
       # 88cywl - 仙遇-IOS
       - equals: "120759013"
         upstream: "88cywl"
-        enabled: true
+        enabled: false
         throttle: 0.2
         custom_params:
           advertiser: "2"
