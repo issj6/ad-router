@@ -12,7 +12,7 @@ settings:
     password: "Yyy443556.0"
     db: 0
   debounce:
-    enabled: true
+    enabled: false
     # 固定窗口：首次到达 + max_wait_ms
     max_wait_ms: 20000
     # 前台提交最大等待时长（毫秒），超时快速返回并后台补提
