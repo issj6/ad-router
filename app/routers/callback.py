@@ -85,6 +85,12 @@ def _should_callback_and_remap_event(udm: Dict[str, Any], routing_udm: Dict[str,
             return True, None  # 不改名
         return False, None
 
+    # 支持字符串简写：callback_events: REGISTERED
+    if isinstance(whitelist, str):
+        if normalized_current == _normalize_event_key(whitelist):
+            return True, None
+        return False, None
+
     # 其他类型：不支持
     return False, None
 
