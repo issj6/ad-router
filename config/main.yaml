@@ -38,7 +38,7 @@ settings:
       socket_connect_timeout: 0.05
       health_check_interval: 30
   routes:
-    enabled: false
+    enabled: true
 #  ingress_aliases:
 #    event_type: [ "reporting_type", "etype", "type" ]
 #    ad_id: [ "ca_id", "aid", "adid" ]
