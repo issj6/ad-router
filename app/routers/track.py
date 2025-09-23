@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from typing import Any, Dict
+import asyncio
 import uuid
 import time
 import datetime
@@ -416,13 +417,36 @@ async def track_event(request: Request, response: Response,
                 except Exception as _e:
                     warning(f"Debounce manager auto-start failed: {_e}")
             # Redis 版：走 submit_job；内存版：走 submit
+            # 前台提交超时保护：超时快速返回并在后台补提/直发
+            try:
+                submit_timeout_ms = int(CONFIG.get("settings", {}).get("debounce", {}).get("submit_timeout_ms", 50))
+            except Exception:
+                submit_timeout_ms = 50
+
             if hasattr(manager, "submit_job"):
-                await manager.submit_job(
-                    key=debounce_key,
-                    order_ts_ms=order_ts_ms,
-                    max_wait_ms=max_wait_ms,
-                    job=job,
-                )
+                try:
+                    await asyncio.wait_for(
+                        manager.submit_job(
+                            key=debounce_key,
+                            order_ts_ms=order_ts_ms,
+                            max_wait_ms=max_wait_ms,
+                            job=job,
+                        ),
+                        timeout=submit_timeout_ms / 1000.0,
+                    )
+                except asyncio.TimeoutError:
+                    warning("Debounce submit timed out, schedule background submit")
+                    try:
+                        asyncio.create_task(
+                            manager.submit_job(
+                                key=debounce_key,
+                                order_ts_ms=order_ts_ms,
+                                max_wait_ms=max_wait_ms,
+                                job=job,
+                            )
+                        )
+                    except Exception as _bg_e:
+                        warning(f"schedule submit_job failed: {_bg_e}")
             else:
                 async def _send_factory():
                     try:
@@ -430,12 +454,30 @@ async def track_event(request: Request, response: Response,
                         await dispatch_click_job(job)
                     except Exception as e:
                         error(f"Debounce send failed: {e}")
-                await manager.submit(
-                    key=debounce_key,
-                    order_ts_ms=order_ts_ms,
-                    max_wait_ms=max_wait_ms,
-                    send_factory=_send_factory,
-                )
+
+                try:
+                    await asyncio.wait_for(
+                        manager.submit(
+                            key=debounce_key,
+                            order_ts_ms=order_ts_ms,
+                            max_wait_ms=max_wait_ms,
+                            send_factory=_send_factory,
+                        ),
+                        timeout=submit_timeout_ms / 1000.0,
+                    )
+                except asyncio.TimeoutError:
+                    warning("Debounce submit (memory) timed out, schedule background submit")
+                    try:
+                        asyncio.create_task(
+                            manager.submit(
+                                key=debounce_key,
+                                order_ts_ms=order_ts_ms,
+                                max_wait_ms=max_wait_ms,
+                                send_factory=_send_factory,
+                            )
+                        )
+                    except Exception as _bg_e:
+                        warning(f"schedule memory submit failed: {_bg_e}")
         except Exception as e:
             warning(f"Debounce submit failed, fallback to direct send: {e}")
             try:

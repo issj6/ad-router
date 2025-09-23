@@ -15,11 +15,28 @@ settings:
     enabled: true
     # 固定窗口：首次到达 + max_wait_ms
     max_wait_ms: 20000
+    # 前台提交最大等待时长（毫秒），超时快速返回并后台补提
+    submit_timeout_ms: 50
+    # ZSET 分片数
+    shards: 16
     # worker 消费参数
-    batch: 512
-    concurrency: 512
+    batch: 256
+    concurrency: 128
     # latest 键兜底 TTL：3 小时
     latest_ttl_ms: 10800000
+    # Redis 连接池
+    writer_pool:
+      max_connections: 400
+      retry_on_timeout: true
+      socket_timeout: 0.08
+      socket_connect_timeout: 0.05
+      health_check_interval: 30
+    worker_pool:
+      max_connections: 200
+      retry_on_timeout: true
+      socket_timeout: 0.08
+      socket_connect_timeout: 0.05
+      health_check_interval: 30
   routes:
     enabled: false
 #  ingress_aliases:
