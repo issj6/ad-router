@@ -16,8 +16,8 @@ settings:
     # 固定窗口：首次到达 + max_wait_ms
     max_wait_ms: 20000
     # worker 消费参数
-    batch: 200
-    concurrency: 64
+    batch: 512
+    concurrency: 512
     # latest 键兜底 TTL：3 小时
     latest_ttl_ms: 10800000
 #  ingress_aliases:

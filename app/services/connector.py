@@ -24,8 +24,8 @@ async def get_client() -> httpx.AsyncClient:
                 pool=10.0  # 连接池超时
             ),
             limits=httpx.Limits(
-                max_keepalive_connections=200,  # 最大保持连接数
-                max_connections=300,  # 最大连接数
+                max_keepalive_connections=700,  # 最大保持连接数
+                max_connections=1000,  # 最大连接数
                 keepalive_expiry=30.0  # 连接保持时间
             ),
             follow_redirects=False,
