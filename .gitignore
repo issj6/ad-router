@@ -123,3 +123,4 @@ logs/
 # Configuration files
 # config/
 
+node_modules/
