@@ -167,6 +167,14 @@ async def handle_upstream_callback(request: Request, response: Response):
         response.status_code = 500
         return APIResponse(success=False, code=500, message="Missing rid")
 
+    # 全局路由开关：关闭时直接对上游返回200，不回拨下游
+    try:
+        global_enabled = bool(CONFIG.get("settings", {}).get("routes", {}).get("enabled", True))
+    except Exception:
+        global_enabled = True
+    if not global_enabled:
+        return APIResponse(success=True, code=200, message="ok")
+
     # 注意：上游ID/下游ID 可以不从token取，按 inbound 映射后如需写日志可从UDM取；此处保持最小改动
     up_id = ""
     ds_id = ""

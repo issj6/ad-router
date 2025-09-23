@@ -14,6 +14,15 @@ def choose_route(udm: Dict[str, Any], config: Dict[str, Any]) -> Tuple[Optional[
         - enabled: 路由是否启用
         - throttle: 扣量比例 (0.0-1.0)，0表示不扣量，0.2表示扣量20%
     """
+    # 全局路由开关（默认开启）。当为 False 时，统一关闭链接。
+    try:
+        global_enabled = bool(config.get("settings", {}).get("routes", {}).get("enabled", True))
+    except Exception:
+        global_enabled = True
+
+    if not global_enabled:
+        return None, None, False, 0.0
+
     rules = config.get("routes", [])
     if not rules:
         return None, None, False, 0.0

@@ -20,6 +20,8 @@ settings:
     concurrency: 512
     # latest 键兜底 TTL：3 小时
     latest_ttl_ms: 10800000
+  routes:
+    enabled: false
 #  ingress_aliases:
 #    event_type: [ "reporting_type", "etype", "type" ]
 #    ad_id: [ "ca_id", "aid", "adid" ]
