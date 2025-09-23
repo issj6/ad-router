@@ -136,6 +136,14 @@ routes:
         callback_events: REGISTERED
         debounce: true
       
+      # 巴掌互动-诺亚传说口袋版-安卓
+      - equals: "68d206fc769ff"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events: ACTIVATED
+        debounce: true
+      
       # 巴掌互动
       - equals: "68ae719ed76c8"
         upstream: "duokaiyou"
@@ -154,6 +162,14 @@ routes:
       
       # 巴掌互动 - 地下城堡4-安卓
       - equals: "68c8f9b76af8d"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events: ACTIVATED
+        debounce: true
+      
+      # 巴掌互动 - 奥丘：树海之下-安卓
+      - equals: "68d25ef9a6903"
         upstream: "duokaiyou"
         enabled: true
         throttle: 0.2
@@ -234,6 +250,32 @@ routes:
           code: "120759013"
           gid: "10998"
           aid: "20250917"
+        debounce: true
+        callback_events: ACTIVATED
+
+####################################################################
+
+      # 研漾 OCPX - 无尽冬日-安卓
+      - equals: "YY65532"
+        upstream: "yanymobi"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          ch: "DMEpl533t5xYpjFx5SRWGBd60Yhc2mhfYdf1Qu0YxAuDrQaruEazw2kmeszTcbpB"
+          trackLinkId: "YY65532"
+          event_type: "1"
+        debounce: true
+        callback_events: ACTIVATED
+      
+      # 研漾 OCPX - 第五人格-安卓
+      - equals: "OW37793"
+        upstream: "yanymobi"
+        enabled: true
+        throttle: 0.2
+        custom_params:
+          ch: "fLtZlynyPbkdgCi7ghnBunsnD7J3sMIAvy42Ym8StaCPZd1IXnKnNQTokak02dAG"
+          trackLinkId: "OW37793"
+          event_type: "1"
         debounce: true
         callback_events: ACTIVATED
         
