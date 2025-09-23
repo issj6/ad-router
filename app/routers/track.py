@@ -372,16 +372,20 @@ async def track_event(request: Request, response: Response,
     except Exception as e:
         debug(f"failed to load route custom_params: {e}")
 
-    # 读取去抖开关：路由级优先生效，支持 True/False；否则回退到全局 settings.debounce.enabled
+    # 读取去抖开关：全局优先级最高。全局关闭则强制禁用；全局开启时，路由可单独关闭。
     debounce_enabled: bool = False
     try:
+        global_debounce = bool(CONFIG.get("settings", {}).get("debounce", {}).get("enabled", False))
         route_debounce = None
         if isinstance(matched_rule, dict):
             route_debounce = matched_rule.get("debounce")
-        if isinstance(route_debounce, bool):
-            debounce_enabled = route_debounce is True
+        if not global_debounce:
+            debounce_enabled = False
         else:
-            debounce_enabled = bool(CONFIG.get("settings", {}).get("debounce", {}).get("enabled", False))
+            if isinstance(route_debounce, bool):
+                debounce_enabled = (route_debounce is True)
+            else:
+                debounce_enabled = True
     except Exception:
         debounce_enabled = False
 
