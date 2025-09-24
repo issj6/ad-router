@@ -28,14 +28,14 @@ settings:
     writer_pool:
       max_connections: 400
       retry_on_timeout: true
-      socket_timeout: 0.08
-      socket_connect_timeout: 0.05
+      socket_timeout: 1.0
+      socket_connect_timeout: 0.5
       health_check_interval: 30
     worker_pool:
       max_connections: 200
       retry_on_timeout: true
-      socket_timeout: 0.08
-      socket_connect_timeout: 0.05
+      socket_timeout: 1.0
+      socket_connect_timeout: 0.5
       health_check_interval: 30
   routes:
     enabled: true
