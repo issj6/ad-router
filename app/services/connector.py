@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 import json
+import time
 from typing import Dict, Any, Optional, Tuple
 from ..utils.logger import info, warning, error
 
@@ -97,6 +98,9 @@ async def http_send(method: str, url: str, headers: Optional[Dict[str, str]] = N
 
         return response.status_code, response_data
 
+    except asyncio.CancelledError:
+        # 传递取消，保证上层 wait_for 能在 submit 超时时及时返回
+        raise
     except httpx.TimeoutException:
         warning(f"HTTP request timeout: {method} {url}")
         return 408, {"error": "timeout"}
@@ -126,30 +130,54 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
     Returns:
         (status_code, response_data) 元组
     """
-    # 已替换为 Loguru 异步日志
+    # 语义修正：timeout_ms 视为“总超时预算”（包含所有尝试与退避等待）
+    # 在预算内动态缩短每次尝试的超时，确保总耗时不超过 timeout_ms。
     last_status, last_response = 500, {"error": "no_attempt"}
 
-    for attempt in range(max_retries + 1):
-        status, response = await http_send(method, url, headers, body, timeout_ms)
+    start_monotonic = time.monotonic()
+    deadline = start_monotonic + (timeout_ms / 1000.0)
 
-        # 记录最后一次结果
+    attempt = 0
+    while attempt <= max_retries:
+        now = time.monotonic()
+        remaining_sec = deadline - now
+        if remaining_sec <= 0:
+            # 预算已耗尽：若之前从未真正发起过请求，则返回超时；否则返回最后结果
+            if last_status == 500 and last_response.get("error") == "no_attempt":
+                return 408, {"error": "timeout"}
+            return last_status, last_response
+
+        # 为当前尝试分配超时（下限100ms，避免过短导致立刻超时）
+        per_attempt_timeout_ms = max(100, int(remaining_sec * 1000))
+
+        status, response = await http_send(
+            method, url, headers, body, per_attempt_timeout_ms
+        )
+
         last_status, last_response = status, response
 
         # 成功：2xx/3xx 不重试
         if 200 <= status < 400:
             break
 
-        # 仅在 408（超时）时允许重试；其余状态码（含 4xx/5xx）不重试
+        # 非超时错误：不重试
         if status != 408:
             break
 
-        # 最后一次尝试，不再等待
-        if attempt == max_retries:
+        # 超时且还有重试机会，考虑退避但不超出预算
+        attempt += 1
+        if attempt > max_retries:
             break
 
-        # 等待后重试
-        await asyncio.sleep(backoff_ms / 1000.0)
-        info(f"Retrying HTTP request: {method} {url}, attempt {attempt + 2}")
+        # 重新计算剩余预算，最多睡到 backoff 或预算用尽
+        now = time.monotonic()
+        remaining_sec = deadline - now
+        if remaining_sec <= 0:
+            break
+        sleep_sec = min(backoff_ms / 1000.0, remaining_sec)
+        if sleep_sec > 0:
+            await asyncio.sleep(sleep_sec)
+        info(f"Retrying HTTP request: {method} {url}, attempt {attempt + 1}")
 
     return last_status, last_response
 

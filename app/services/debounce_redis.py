@@ -241,11 +241,11 @@ class RedisDebounceManager:
             )
         except Exception as e:
             error(f"Redis debounce submit failed: {e}")
-            # 降级直接发送
+            # 降级为后台异步发送，避免阻塞前台请求
             try:
-                await dispatch_click_job(job)
+                asyncio.create_task(dispatch_click_job(job))
             except Exception as ex:
-                error(f"Redis debounce fallback send failed: {ex}")
+                error(f"Redis debounce fallback schedule failed: {ex}")
 
     async def _process_member(self, task_key: str) -> None:
         if self._sem is None:
