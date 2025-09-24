@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 import zlib
+import os
 from typing import Any, Dict, Optional
 
 from ..utils.logger import info, warning, error, perf_info
@@ -354,14 +355,17 @@ class RedisDebounceManager:
             error(f"debounce worker loop crashed: {e}")
 
 
-_singleton: Optional[RedisDebounceManager] = None
+# 进程级管理器字典（避免跨进程共享状态）
+_managers: Dict[int, RedisDebounceManager] = {}
 
 
 def get_manager() -> RedisDebounceManager:
-    """获取 Redis 去抖管理器单例。"""
-    global _singleton
-    if _singleton is not None:
-        return _singleton
+    """获取进程级 Redis 去抖管理器。"""
+    global _managers
+    pid = os.getpid()
+    
+    if pid in _managers:
+        return _managers[pid]
     from ..config import CONFIG
     settings = CONFIG.get("settings", {})
     redis_conf = settings.get("redis") or {}
@@ -393,7 +397,7 @@ def get_manager() -> RedisDebounceManager:
     writer_client = build_client(writer_pool_conf)
     worker_client = build_client(worker_pool_conf) if worker_pool_conf else writer_client
 
-    _singleton = RedisDebounceManager(
+    _managers[pid] = RedisDebounceManager(
         writer_client=writer_client,
         worker_client=worker_client,
         shards=shards,
@@ -401,6 +405,6 @@ def get_manager() -> RedisDebounceManager:
         concurrency=concurrency,
         latest_ttl_ms=latest_ttl_ms,
     )
-    return _singleton
+    return _managers[pid]
 
 

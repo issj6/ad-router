@@ -2,22 +2,25 @@ import httpx
 import asyncio
 import json
 import time
+import os
 from typing import Dict, Any, Optional, Tuple
 from ..utils.logger import info, warning, error
 
-# 全局HTTP客户端
-_client: Optional[httpx.AsyncClient] = None
+# 进程级HTTP客户端（避免跨进程共享状态）
+_clients: Dict[int, httpx.AsyncClient] = {}
 
 
 async def get_client() -> httpx.AsyncClient:
-    """获取全局HTTP客户端，使用连接池提高性能"""
-    global _client
-    if _client is None:
+    """获取进程级HTTP客户端，避免跨进程共享状态"""
+    global _clients
+    pid = os.getpid()
+    
+    if pid not in _clients:
         # 关闭 httpx 默认日志，避免二次编码显示混淆
         import logging
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
-        _client = httpx.AsyncClient(
+        _clients[pid] = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=8.0,  # 连接超时
                 read=5.0,  # 读取超时
@@ -25,14 +28,14 @@ async def get_client() -> httpx.AsyncClient:
                 pool=10.0  # 连接池超时
             ),
             limits=httpx.Limits(
-                max_keepalive_connections=700,  # 最大保持连接数
-                max_connections=1000,  # 最大连接数
+                max_keepalive_connections=200,  # 减少每进程连接数
+                max_connections=300,  # 减少每进程连接数
                 keepalive_expiry=30.0  # 连接保持时间
             ),
             follow_redirects=False,
             verify=True  # 验证SSL证书
         )
-    return _client
+    return _clients[pid]
 
 
 async def http_send(method: str, url: str, headers: Optional[Dict[str, str]] = None,
@@ -184,7 +187,8 @@ async def http_send_with_retry(method: str, url: str, headers: Optional[Dict[str
 
 async def cleanup_client():
     """清理HTTP客户端资源"""
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    global _clients
+    pid = os.getpid()
+    if pid in _clients:
+        await _clients[pid].aclose()
+        del _clients[pid]

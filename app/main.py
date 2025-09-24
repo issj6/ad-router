@@ -108,55 +108,76 @@ async def health_check():
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动事件"""
-    info("OCPX Relay System starting up...")
+    """应用启动事件 - 每个进程独立初始化"""
+    import os
+    pid = os.getpid()
+    info(f"OCPX Relay System starting up in process {pid}...")
     
-    # 这里可以添加启动时的初始化逻辑
-    # 比如：预热数据库连接、加载配置等
+    # 预热数据库连接（进程级）
     try:
-        # 仅当全局开启去抖时才启动去抖管理器
+        from .db import get_session
+        async with await get_session() as session:
+            info(f"Database connection preheated for process {pid}")
+    except Exception as e:
+        warning(f"Failed to preheat database connection: {e}")
+    
+    # 初始化去抖管理器（进程级）
+    try:
         from .config import CONFIG
         debounce_enabled = bool(CONFIG.get("settings", {}).get("debounce", {}).get("enabled", False))
         if debounce_enabled:
             from .services.debounce_redis import get_manager
             await get_manager().start()
-            info("Debounce manager started")
+            info(f"Debounce manager started for process {pid}")
         else:
-            info("Debounce disabled globally, manager not started")
+            info(f"Debounce disabled globally in process {pid}")
     except Exception as e:
-        warning(f"Debounce manager failed to start: {e}")
-    finally:
-        pass
+        warning(f"Debounce manager failed to start in process {pid}: {e}")
     
-    info("OCPX Relay System started successfully")
+    info(f"OCPX Relay System started successfully in process {pid}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """应用关闭事件"""
-    info("OCPX Relay System shutting down...")
+    """应用关闭事件 - 每个进程独立清理"""
+    import os
+    pid = os.getpid()
+    info(f"OCPX Relay System shutting down in process {pid}...")
     
-    # 清理资源
-    from .services.connector import cleanup_client
-    await cleanup_client()
+    # 清理HTTP客户端（进程级）
     try:
-        # 仅在全局开启去抖时才获取与关闭管理器，防止全局关闭时仍然触发 Redis 初始化
+        from .services.connector import cleanup_client
+        await cleanup_client()
+        info(f"HTTP client cleaned up for process {pid}")
+    except Exception as e:
+        warning(f"HTTP client cleanup failed in process {pid}: {e}")
+    
+    # 清理去抖管理器（进程级）
+    try:
         from .config import CONFIG
         if bool(CONFIG.get("settings", {}).get("debounce", {}).get("enabled", False)):
             from .services.debounce_redis import get_manager
             mgr = get_manager()
             try:
-                # 关停前尽量冲刷已到期任务，force=True 兜底（有限批量避免压力峰值）
-                processed = await mgr.flush_all(force=True, max_items=1000)
-                info(f"Debounce flush_all processed: {processed}")
+                processed = await mgr.flush_all(force=True, max_items=500)  # 减少批量避免阻塞
+                info(f"Debounce flush_all processed {processed} items in process {pid}")
             except Exception as fe:
-                warning(f"Debounce flush_all failed: {fe}")
+                warning(f"Debounce flush_all failed in process {pid}: {fe}")
             await mgr.shutdown()
+            info(f"Debounce manager shutdown in process {pid}")
         else:
-            info("Debounce disabled globally, skip manager shutdown")
+            info(f"Debounce disabled, skip shutdown in process {pid}")
     except Exception as e:
-        warning(f"Debounce manager failed to shutdown: {e}")
+        warning(f"Debounce manager shutdown failed in process {pid}: {e}")
     
-    info("OCPX Relay System shutdown complete")
+    # 清理数据库连接（进程级）
+    try:
+        from .db import cleanup_old_engines
+        await cleanup_old_engines()
+        info(f"Database connections cleaned up for process {pid}")
+    except Exception as e:
+        warning(f"Database cleanup failed in process {pid}: {e}")
+    
+    info(f"OCPX Relay System shutdown complete in process {pid}")
 
 if __name__ == "__main__":
     import uvicorn

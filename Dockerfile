@@ -35,5 +35,16 @@ COPY . .
 # 暴露端口
 EXPOSE 6789
 
-# 启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6789"]
+# 启动命令 - 优化的gunicorn多进程模式
+CMD ["gunicorn", "app.main:app", \
+     "-w", "4", \
+     "-k", "uvicorn.workers.UvicornWorker", \
+     "-b", "0.0.0.0:6789", \
+     "--preload", \
+     "--max-requests", "5000", \
+     "--max-requests-jitter", "500", \
+     "--worker-connections", "1000", \
+     "--timeout", "30", \
+     "--keepalive", "5", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]
