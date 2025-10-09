@@ -176,6 +176,14 @@ routes:
         callback_events: ACTIVATED
         debounce: true
 
+      # 巴掌互动 - 三国志战略版
+      - equals: "68e74a3ac2700"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events: ACTIVATED
+        debounce: true
+
 ####################################################################
 
       # 88cywl - 燕云十六声-安卓
