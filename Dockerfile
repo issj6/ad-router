@@ -37,7 +37,7 @@ EXPOSE 6789
 
 # 启动命令 - 优化的gunicorn多进程模式（不使用preload确保进程独立）
 CMD ["gunicorn", "app.main:app", \
-     "-w", "4", \
+     "-w", "17", \
      "-k", "uvicorn.workers.UvicornWorker", \
      "-b", "0.0.0.0:6789", \
      "--max-requests", "5000", \
