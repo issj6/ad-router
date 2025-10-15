@@ -192,6 +192,14 @@ routes:
         callback_events: ACTIVATED
         debounce: true
 
+      # 巴掌互动 - 山海幻境
+      - equals: "68ef3ff334b69"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events: ACTIVATED
+        debounce: true
+
 ######################## 88cywl ############################################
 
       # 88cywl - 燕云十六声-安卓
