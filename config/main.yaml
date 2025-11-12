@@ -199,6 +199,14 @@ routes:
         throttle: 0.2
         callback_events: ACTIVATED
         debounce: true
+      
+      # 巴掌互动 - 荒原曙光
+      - equals: "69142ae4902d4"
+        upstream: "duokaiyou"
+        enabled: true
+        throttle: 0.2
+        callback_events: ACTIVATED
+        debounce: true
 
 ######################## 88cywl ############################################
 
